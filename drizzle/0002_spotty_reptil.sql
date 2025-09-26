@@ -1,0 +1,1 @@
+ALTER TABLE "campaign_plans" ADD COLUMN "campaign_id" text;
