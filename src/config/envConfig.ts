@@ -23,10 +23,10 @@ export const envConfigs = {
   node_env : parsedEnv.NODE_ENV,
   dburl : parsedEnv.DATABASE_URL, 
   jwt_secret : parsedEnv.JWT_SECRET,
-  googleClientId : process.env.GOOGLE_CLIENT_ID,
-  googleClientSecret : process.env.GOOGLE_CLIENT_SECRET,
-  redirectUri : process.env.REDIRECT_URI,
-  frontendUrl : process.env.FRONTEND_URL,
+  googleClientId : parsedEnv.GOOGLE_CLIENT_ID,
+  googleClientSecret : parsedEnv.GOOGLE_CLIENT_SECRET,
+  redirectUri : parsedEnv.REDIRECT_URI,
+  frontendUrl : parsedEnv.FRONTEND_URL,
   accessExpirationMinutes : parseInt(parsedEnv.ACCESS_TOKEN_EXPIRY) || 60,
   aiBackendUrl : parsedEnv.AI_BACKEND_URL
 }

@@ -48,6 +48,7 @@ export default class AuthController {
       // 🔹 Generate access token
       const authToken = generateAccessToken(user.id);
       console.log("Generated Auth Token:", authToken);
+      console.log("check url", envConfigs.frontendUrl);
       return res.redirect(`/${envConfigs.frontendUrl}/auth/callback/google?token=${authToken}&&email=${email}&&name=${name}&&avatar_url=${picture}`);
     } catch (error: any) {
       console.error("Google login error:", error.response?.data || error.message);
