@@ -4,7 +4,11 @@ import BrandProfileService from "../services/brandProfile";
 export default class BrandProfileController { 
   static createJob = async (req: Request, res: Response) => {
   try {
-    const userId = req.body.userId||2;
+    const user:any = req.user;
+      if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+     }
+    const userId = user.userId;
     const source_type = req.body.source_type;
     const website = req.body.url || null;
     const file = req.file?.buffer || null;
@@ -20,6 +24,10 @@ export default class BrandProfileController {
 
 static getJobStatus = async (req: Request, res: Response) => {
   try {
+    const user:any = req.user;
+      if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+     }
     const { job_id } = req.params;
     console.log("job_id",job_id);
     if (!job_id) return res.status(400).json({ message: 'job_id required' });
@@ -34,6 +42,10 @@ static getJobStatus = async (req: Request, res: Response) => {
 
  static getProfile = async (req: Request, res: Response) => {
   try {
+    const user:any = req.user;
+      if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+     }
     const { profile_id } = req.params;
     if (!profile_id) return res.status(400).json({ message: 'profile_id required' });
 

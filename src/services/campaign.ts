@@ -2,13 +2,38 @@ import axios from "axios";
 import db from "../config/db";
 import { brandProfiles, campaignPlans } from "../model/schema";
 import { eq } from "drizzle-orm";
+import { envConfigs } from "../config/envConfig";
 
-const API_BASE_URL = "http://127.0.0.1:8000/api/v1/campaigns"; 
+const API_BASE_URL = `${envConfigs.aiBackendUrl}/campaigns`;
 
 export class CampaignPlanService {
+
+  static async createChat(userId: number, payload: any) {
+    try {
+      console.log("payload.......text.",payload)
+      const generateStructuredData:any = await axios.post(
+        `${API_BASE_URL}/parse-from-text`,
+        payload
+      );
+      console.log("generateStructuredData........",generateStructuredData)
+      generateStructuredData.data.brand_profile_id = payload.brand_profile_id;
+      // console.log("campaignData........",generateStructuredData)
+    return generateStructuredData?.data;
+    } catch (error: any) {
+      console.error("Error creating campaign plan:", error.response?.data || error.message);
+      throw new Error(error.response?.data?.detail[0].msg || error.message || "Unknown error");
+    }
+  }
   static async createCampaignPlan(userId: number, payload: any) {
     try {
-      const response = await axios.post(API_BASE_URL, payload);
+      console.log("payload.......text.",payload)
+      // const generateStructuredData:any = await axios.post(
+      //   `${API_BASE_URL}/parse-from-text`,
+      //   payload
+      // );
+      // console.log("generateStructuredData........",generateStructuredData)
+      // generateStructuredData.brand_profile_id = payload.brand_profile_id;
+      const response = await axios.post(`${API_BASE_URL}`, payload);
       const campaignData = response.data;
       console.log("campaignData........",campaignData)
       const checkBrandProfile = await db.select().from(brandProfiles).where(eq(brandProfiles.profileId, payload.brand_profile_id));
@@ -30,7 +55,7 @@ export class CampaignPlanService {
       }
     } catch (error: any) {
       console.error("Error creating campaign plan:", error.response?.data || error.message);
-      throw new Error("Failed to create campaign plan");
+      throw new Error(error.response?.data?.detail[0].msg || error.message || "Unknown error");
     }
   }
 
@@ -83,6 +108,12 @@ static async finalizeCampaignPlan(
    
     const finalizedPlan = response.data;
     // console.log("Finalized Plan Response:", finalizedPlan);
+    if(finalizedPlan.plan_status ){
+      //update plan_status in campaignPlans table
+      await db.update(campaignPlans)
+        .set({ data: { ...finalizedPlan, plan_status: finalizedPlan.plan_status } })
+        .where(eq(campaignPlans.campaignId, campaignPlanId));   
+    }
 
     return finalizedPlan;
   } catch (error: any) {

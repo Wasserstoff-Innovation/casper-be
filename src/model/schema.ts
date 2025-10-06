@@ -40,7 +40,7 @@ export const campaignPlans = pgTable('campaign_plans', {
 export const contentCalander = pgTable('content_calander', {
   id: serial('id').primaryKey(),
   userId: integer('user_id').references(() => users.id),
-  campaignPlanId: integer('campaign_plan_id').references(() => campaignPlans.id).unique(),
+  campaignPlanId: integer('campaign_plan_id').references(() => campaignPlans.id),
   data: jsonb('data'),
   created_at: timestamp("created_at").defaultNow()
 });
@@ -59,11 +59,19 @@ export const visitedUsers = pgTable("visited_users", {
   interestedFeatures: jsonb("interested_features").$type<string[]>(),
 });
 
-// CampaignPlan → User, BrandProfile, ContentCalendar
-export const campaignPlansRelations = relations(campaignPlans, ({ one, one: oneToOne }) => ({
-  user: one(users, { fields: [campaignPlans.userId], references: [users.id] }),
-  brandProfile: one(brandProfiles, { fields: [campaignPlans.brandProfileId], references: [brandProfiles.id] }),
-  contentCalander: oneToOne(contentCalander, { fields: [campaignPlans.id], references: [contentCalander.campaignPlanId] })
+// // User → BrandProfiles
+export const usersRelations = relations(users, ({ many }) => ({
+  brandProfiles: many(brandProfiles),
+  brandKits: many(brandKits),
+  campaignPlans: many(campaignPlans),
+  contentCalander: many(contentCalander),
+}));
+
+// BrandProfile → BrandKits + CampaignPlans
+export const brandProfilesRelations = relations(brandProfiles, ({ many, one }) => ({
+  user: one(users, { fields: [brandProfiles.userId], references: [users.id] }),
+  brandKits: many(brandKits),
+  campaignPlans: many(campaignPlans),
 }));
 
 // BrandKit → User, BrandProfile
@@ -72,8 +80,16 @@ export const brandKitsRelations = relations(brandKits, ({ one }) => ({
   brandProfile: one(brandProfiles, { fields: [brandKits.brandProfileId], references: [brandProfiles.id] }),
 }));
 
+// CampaignPlan → User, BrandProfile, ContentCalendar (many)
+export const campaignPlansRelations = relations(campaignPlans, ({ one, many }) => ({
+  user: one(users, { fields: [campaignPlans.userId], references: [users.id] }),
+  brandProfile: one(brandProfiles, { fields: [campaignPlans.brandProfileId], references: [brandProfiles.id] }),
+  contentCalander: many(contentCalander),
+}));
+
 // ContentCalendar → CampaignPlan, User
 export const contentCalanderRelations = relations(contentCalander, ({ one }) => ({
   campaignPlan: one(campaignPlans, { fields: [contentCalander.campaignPlanId], references: [campaignPlans.id] }),
   user: one(users, { fields: [contentCalander.userId], references: [users.id] }),
 }));
+

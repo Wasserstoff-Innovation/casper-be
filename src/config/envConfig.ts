@@ -14,6 +14,7 @@ const envVariableSchema = z.object({
   REDIRECT_URI: z.string(),
   FRONTEND_URL: z.string(),
   ACCESS_TOKEN_EXPIRY: z.string().default('60m'),
+  AI_BACKEND_URL: z.string()
 })
 const parsedEnv = envVariableSchema.parse(process.env);
 
@@ -27,4 +28,5 @@ export const envConfigs = {
   redirectUri : process.env.REDIRECT_URI,
   frontendUrl : process.env.FRONTEND_URL,
   accessExpirationMinutes : parseInt(parsedEnv.ACCESS_TOKEN_EXPIRY) || 60,
+  aiBackendUrl : parsedEnv.AI_BACKEND_URL
 }

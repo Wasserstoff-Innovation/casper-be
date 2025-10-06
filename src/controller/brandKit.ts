@@ -7,7 +7,11 @@ export default class BrandKitController {
       const files = req.files as { [fieldname: string]: Express.Multer.File[] };
       const kitDataJson = JSON.parse(req.body.kit_data_json);
 
-      const userId = Number(req.body.userId)||2;
+      const user:any = req.user;
+      if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+     }
+      const userId = user.userId;
       const brandProfileId = (req.body.brandProfileId);
       console.log("userId and brandProfileId",userId,brandProfileId);
       if (!userId || !brandProfileId) {
@@ -35,10 +39,15 @@ export default class BrandKitController {
 
    static async getBrandKit(req: Request, res: Response) {
     try {
+      const user:any = req.user;
+      if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+     }
+      const userId = user.userId;
       const kitId = req.params.kit_id;
       console.log("inside the getBrandKit",kitId)
       const brandKit = await BrandKitsService.fetchBrandKit(kitId);
-
+  
       if (!brandKit) {
         return res.status(404).json({ message: "Brand Kit not found" });
       }
@@ -52,6 +61,11 @@ export default class BrandKitController {
    static async getBrandKitReport(req: Request, res: Response) {
     try {
       console.log("inside the getBrandKitReport")
+      const user:any = req.user;
+      if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+     }
+      const userId = user.userId;
       const kitId = req.params.kit_id;
       const reportHtml = await BrandKitsService.fetchBrandKitReport(kitId);
 

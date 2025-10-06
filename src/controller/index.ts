@@ -1,6 +1,7 @@
 import AuthController from "./auth";
 import BrandKitController from "./brandKit";
 import BrandProfileController from "./brandProfile";
+import CalendarController from "./calendar";
 import { CampaignPlanController } from "./campaign";
 import { VisitedUserController } from "./visited";
 
@@ -9,7 +10,8 @@ export default  {
   branhdProfile: BrandProfileController,
   brandKit: BrandKitController,
   visitedUser: VisitedUserController,
-  campainPlan:CampaignPlanController
+  campainPlan:CampaignPlanController,
+  calendar:CalendarController
 }
 
 

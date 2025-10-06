@@ -1,0 +1,1 @@
+ALTER TABLE "content_calander" DROP CONSTRAINT "content_calander_campaign_plan_id_unique";

@@ -48,12 +48,35 @@ export default class AuthController {
       // 🔹 Generate access token
       const authToken = generateAccessToken(user.id);
       console.log("Generated Auth Token:", authToken);
-      return res.redirect(`${envConfigs.frontendUrl}/auth/callback/google?token=${authToken}&&email=${email}&&name=${name}&&avatar_url=${picture}`);
+      return res.redirect(`/${envConfigs.frontendUrl}/auth/callback/google?token=${authToken}&&email=${email}&&name=${name}&&avatar_url=${picture}`);
     } catch (error: any) {
       console.error("Google login error:", error.response?.data || error.message);
       return res.status(500).send({
         status: false,
         message: error.response?.data?.error_description || error.message,
+      });
+    }
+  }
+
+  static getUser = async (req: Request, res: Response) => {
+    try {
+      const user:any = req.user
+      if (!req.user) return res.status(401).json({ error: "Unauthorized" })
+      const userId = user.userId
+
+      const userData = await AuthService.getUser(userId);
+
+      if (!user) throw new Error("User not found");
+      return res.status(200).send({
+        status: true,
+        message: "User found",
+        data: userData,
+      });
+    } catch (error: any) {
+      console.error("Error fetching user:", error.message);
+      return res.status(500).send({
+        status: false,
+        message: error.message,
       });
     }
   }

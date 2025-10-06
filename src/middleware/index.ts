@@ -48,7 +48,7 @@ const authenticateUserJwt = (
   })(req, res, next);
 };
 
-export const authenticateUser = [
+export const authenticateUser:any = [
   validateRequestHeader(TokenHeaderSchema),
   authenticateUserJwt,
 ];

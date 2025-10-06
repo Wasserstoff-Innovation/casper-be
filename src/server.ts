@@ -4,9 +4,11 @@ import { connectDB } from './config/db';
 import logger from './config/logger';
 import router from './routes';
 import cors from 'cors';
+import passport from './config/passport';
 dotenv.config();
 
 const app = express();
+app.use(passport.initialize());
 const port = process.env.PORT || 3000;
 const env = process.env.NODE_ENV || 'development';
 

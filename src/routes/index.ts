@@ -5,6 +5,7 @@ import brandKit from "./brandKit";
 import path from "path";
 import visit from "./visited";
 import campaign from "./campaign";
+import calendar from "./calendar";
 
 const router = express.Router();
 
@@ -28,6 +29,10 @@ const defaultRoutes = [
   {
     path: "/campaigns",
     route: campaign
+  },
+  {
+    path: "/calendar",
+    route: calendar
   }
 ]
 

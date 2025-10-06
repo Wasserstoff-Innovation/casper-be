@@ -3,8 +3,10 @@ import axios from "axios";
 import { brandKits, brandProfiles } from "../model/schema";
 import db from "../config/db";
 import { eq } from "drizzle-orm";
+import { envConfigs } from "../config/envConfig";
 
-const API_BASE_URL = "http://127.0.0.1:8000/api/v1/brand-kits";
+// const API_BASE_URL = "http://127.0.0.1:8000/api/v1/brand-kits";
+const API_BASE_URL = `${envConfigs.aiBackendUrl}/brand-kits`;
 
 export default class BrandKitsService {
   static async createBrandKit(
