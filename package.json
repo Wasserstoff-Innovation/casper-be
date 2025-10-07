@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/server.js",
-    "dev": "nodemon src/server.ts",
+    "dev": "ts-node src/server.ts",
     "dev:debug": "cross-env NODE_ENV=development nodemon src/server.ts",
     "start:prod": "cross-env NODE_ENV=production node dist/server.js",
     "migration:generate": "drizzle-kit generate",
