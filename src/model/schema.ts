@@ -22,7 +22,7 @@ export const brandProfiles = pgTable('brand_profiles', {
 export const brandKits = pgTable('brand_kits', {
   id: serial('id').primaryKey(),
   userId: integer('user_id').references(() => users.id),
-  brandProfileId: integer('brand_profile_id').references(() => brandProfiles.id),
+  brandProfileId: integer('brand_profile_id').references(() => brandProfiles.id).unique(),
   kitData: jsonb('kit_data'),
   created_at: timestamp("created_at").defaultNow(),
   updated_at: timestamp("updated_at").defaultNow()
@@ -31,7 +31,7 @@ export const brandKits = pgTable('brand_kits', {
 export const campaignPlans = pgTable('campaign_plans', {
   id: serial('id').primaryKey(),
   userId: integer('user_id').references(() => users.id),
-  brandProfileId: integer('brand_profile_id').references(() => brandProfiles.id),
+  brandProfileId: integer('brand_profile_id').references(() => brandProfiles.id).unique(),
   campaignId: text('campaign_id'),
   data: jsonb('data'),
   created_at: timestamp("created_at").defaultNow()
@@ -40,7 +40,7 @@ export const campaignPlans = pgTable('campaign_plans', {
 export const contentCalander = pgTable('content_calander', {
   id: serial('id').primaryKey(),
   userId: integer('user_id').references(() => users.id),
-  campaignPlanId: integer('campaign_plan_id').references(() => campaignPlans.id),
+  campaignPlanId: integer('campaign_plan_id').references(() => campaignPlans.id).unique(),
   data: jsonb('data'),
   created_at: timestamp("created_at").defaultNow()
 });
@@ -70,8 +70,8 @@ export const usersRelations = relations(users, ({ many }) => ({
 // BrandProfile → BrandKits + CampaignPlans
 export const brandProfilesRelations = relations(brandProfiles, ({ many, one }) => ({
   user: one(users, { fields: [brandProfiles.userId], references: [users.id] }),
-  brandKits: many(brandKits),
-  campaignPlans: many(campaignPlans),
+  brandKits: one(brandKits),
+  campaignPlans: one(campaignPlans),
 }));
 
 // BrandKit → User, BrandProfile
@@ -84,7 +84,7 @@ export const brandKitsRelations = relations(brandKits, ({ one }) => ({
 export const campaignPlansRelations = relations(campaignPlans, ({ one, many }) => ({
   user: one(users, { fields: [campaignPlans.userId], references: [users.id] }),
   brandProfile: one(brandProfiles, { fields: [campaignPlans.brandProfileId], references: [brandProfiles.id] }),
-  contentCalander: many(contentCalander),
+  contentCalander: one(contentCalander),
 }));
 
 // ContentCalendar → CampaignPlan, User

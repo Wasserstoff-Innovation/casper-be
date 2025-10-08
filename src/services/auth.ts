@@ -33,51 +33,95 @@ export default class AuthService {
   }
 
   static getUser = async (userId: number) => {
-  const userData = await db.query.users.findFirst({
-    where: eq(users.id, userId),
-    with: {
-      brandProfiles: {
+    try {
+      const result: any = await db.query.brandProfiles.findMany({
+        where: (fields: any, operators: any) => operators.eq(fields.userId, userId),
+        columns: {
+          profileId: true,
+        },
         with: {
-          brandKits: true,
-          campaignPlans: {
-            with: {
-              contentCalander: true,
+          brandKits: {
+            columns: {
+              kitData: true,
             },
           },
         },
-      },
-    },
-  });
-  console.log("userData...................",userData);
-  return {
-    userId,
-    brands: userData?.brandProfiles.map((bp:any) => ({
-      id: bp.id,
-      jobId: bp.jobId,
-      profileId: bp.profileId,
-      status: bp.data?.status ?? "unknown",
-      createdAt: bp.created_at,
-      brandKits: bp.brandKits.map((kit:any) => ({
-        id: kit.id,
-        kitData: kit.kitData,
-        createdAt: kit.created_at,
-        updatedAt: kit.updated_at,
-      })),
-      campaigns: bp.campaignPlans.map((cp:any) => ({
-        id: cp.id,
-        campaignId: cp.campaignId,
-        data: cp.data,
-        createdAt: cp.created_at,
-        contentCalander: cp.contentCalander.map((cal:any) => ({
-          id: cal.id,
-          data: cal.data,
-          createdAt: cal.created_at,
-        })),
-      })),
-    })),
-    activeBrandId: userData?.brandProfiles[0]?.profileId || null,
-    loading: false,
-    error: null,
+      });
+
+      if (!result || result.length === 0) {
+        console.log("No brand profile found for user:", userId);
+        return [];
+      }
+      console.log(" result................................", result[0]?.brandKits?.kitData);
+      const formatted = result.map((profile: any) => {
+        const brandKits = profile.brandKits;
+        return {
+          brandProfileId: profile.profileId,
+          kitData: brandKits?.kitData ?? {},
+        };
+      });
+
+      console.log("Formatted result................................", formatted);
+      return formatted;
+
+    } catch (error: any) {
+      console.error("Error fetching user data:", error);
+      throw new Error("Failed to fetch user data");
+    }
   };
-};
+
+
+  static getCalendarData = async (userId: number, profileId: any) => {
+    try {
+      const result = await db.query.brandProfiles.findMany({
+        where: (fields: any, operators: any) => operators.eq(fields.profileId, profileId),
+        columns: { profileId: true },
+        with: {
+          campaignPlans: {
+            columns: { campaignId: true },
+            with: {
+              contentCalander: { columns: { data: true } },
+            },
+          },
+        },
+      });
+
+      // console.log("Raw result:", result);
+
+      if (!result || result.length === 0) return [];
+
+      const formatted = result.map((profile: any) => {
+        const campaignPlansArray = Array.isArray(profile.campaignPlans)
+          ? profile.campaignPlans
+          : profile.campaignPlans
+            ? [profile.campaignPlans]
+            : [];
+
+        return {
+          brandProfileId: profile.profileId,
+          campaignPlans: campaignPlansArray.map((campaignPlan: any) => {
+            const contentCalanderArray = Array.isArray(campaignPlan.contentCalander)
+              ? campaignPlan.contentCalander
+              : campaignPlan.contentCalander
+                ? [campaignPlan.contentCalander]
+                : [];
+
+            return {
+              campaignId: campaignPlan.campaignId,
+              contentCalander: contentCalanderArray.map((cc: any) => cc.data ?? {}),
+            };
+          }),
+        };
+      });
+
+      console.log("Formatted calendar data:", formatted);
+      return formatted;
+
+    } catch (error: any) {
+      console.error("Error fetching calendar data:", error);
+      throw new Error("Failed to fetch calendar data");
+    }
+  };
+
+
 }

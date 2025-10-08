@@ -1,0 +1,1 @@
+ALTER TABLE "brand_kits" ADD CONSTRAINT "brand_kits_brand_profile_id_unique" UNIQUE("brand_profile_id");

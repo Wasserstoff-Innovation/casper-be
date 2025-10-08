@@ -1,0 +1,2 @@
+ALTER TABLE "campaign_plans" ADD CONSTRAINT "campaign_plans_brand_profile_id_unique" UNIQUE("brand_profile_id");--> statement-breakpoint
+ALTER TABLE "content_calander" ADD CONSTRAINT "content_calander_campaign_plan_id_unique" UNIQUE("campaign_plan_id");

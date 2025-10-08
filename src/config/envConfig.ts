@@ -14,7 +14,12 @@ const envVariableSchema = z.object({
   REDIRECT_URI: z.string(),
   FRONTEND_URL: z.string(),
   ACCESS_TOKEN_EXPIRY: z.string().default('60m'),
-  AI_BACKEND_URL: z.string()
+  AI_BACKEND_URL: z.string(),
+  APPLE_CLIENT_ID: z.string(),
+  APPLE_TEAM_ID: z.string(),
+  APPLE_KEY_ID: z.string(),
+  APPLE_REDIRECT_URI: z.string(),
+  SCOPE: z.string().default('name email'),
 })
 const parsedEnv = envVariableSchema.parse(process.env);
 
@@ -28,5 +33,10 @@ export const envConfigs = {
   redirectUri : parsedEnv.REDIRECT_URI,
   frontendUrl : parsedEnv.FRONTEND_URL,
   accessExpirationMinutes : parseInt(parsedEnv.ACCESS_TOKEN_EXPIRY) || 60,
-  aiBackendUrl : parsedEnv.AI_BACKEND_URL
+  aiBackendUrl : parsedEnv.AI_BACKEND_URL,
+  appleClientId : parsedEnv.APPLE_CLIENT_ID,
+  appleTeamId : parsedEnv.APPLE_TEAM_ID,
+  appleKeyId : parsedEnv.APPLE_KEY_ID,
+  appleRedirectUri : parsedEnv.APPLE_REDIRECT_URI,
+  scope : parsedEnv.SCOPE,
 }
