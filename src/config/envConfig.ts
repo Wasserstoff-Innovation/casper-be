@@ -20,6 +20,8 @@ const envVariableSchema = z.object({
   APPLE_KEY_ID: z.string(),
   APPLE_REDIRECT_URI: z.string(),
   SCOPE: z.string().default('name email'),
+  AI_IMAGE_GENERATION_URL: z.string(),
+  AI_TEXT_GENERATION_URL: z.string(),
 })
 const parsedEnv = envVariableSchema.parse(process.env);
 
@@ -39,4 +41,6 @@ export const envConfigs = {
   appleKeyId : parsedEnv.APPLE_KEY_ID,
   appleRedirectUri : parsedEnv.APPLE_REDIRECT_URI,
   scope : parsedEnv.SCOPE,
+  aiImageGenerationUrl : parsedEnv.AI_IMAGE_GENERATION_URL,
+  aiTextGenerationUrl : parsedEnv.AI_TEXT_GENERATION_URL,
 }

@@ -6,6 +6,8 @@ import path from "path";
 import visit from "./visited";
 import campaign from "./campaign";
 import calendar from "./calendar";
+import imageGeneration from "./imageGeneration";
+import textGeneration from "./textGeneration";
 
 const router = express.Router();
 
@@ -33,7 +35,16 @@ const defaultRoutes = [
   {
     path: "/calendar",
     route: calendar
+  },
+  {
+    path: "/image-generation",
+    route: imageGeneration
+  },
+  {
+    path: "/text-generation",
+    route: textGeneration
   }
+  // {
 ]
 
 defaultRoutes.forEach((route) => {

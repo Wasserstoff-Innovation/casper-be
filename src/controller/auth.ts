@@ -53,7 +53,7 @@ export default class AuthController {
       console.log("check url", envConfigs.frontendUrl);
       return res.redirect(`${envConfigs.frontendUrl}/auth/callback/google?token=${authToken}&&email=${email}&&name=${name}&&avatar_url=${picture}`);
     } catch (error: any) {
-      console.error("Google login error:", error.response?.data || error.message);
+      console.error("Google login error:", error || error.message);
       return res.status(500).send({
         status: false,
         message: error.response?.data?.error_description || error.message,

@@ -1,16 +1,16 @@
+import { ZodError, ZodObject, ZodTypeAny } from "zod";
 import { Request, Response, NextFunction } from "express";
-import { ZodObject, ZodError, ZodTypeAny } from "zod";
 
-// schema is a ZodObject or any Zod schema
 const validateRequest =
   (schema: ZodObject<any> | ZodTypeAny) =>
   (req: Request, res: Response, next: NextFunction) => {
     try {
-      schema.parse({
-        body: req.body,
-        query: req.query,
-        params: req.params,
-      });
+      // Parse the body directly
+      console.log("Validating request with schema:", schema);
+      console.log("Request body:", req.body);
+      schema.parse(req.body);
+      schema.parse(req.params);
+      schema.parse(req.query);
       next();
     } catch (err) {
       if (err instanceof ZodError) {
@@ -18,7 +18,7 @@ const validateRequest =
           success: false,
           message: "Validation error",
           errors: err.issues.map((issue) => ({
-            path: issue.path.join("."), // e.g. "body.email"
+            path: issue.path.join("."), // e.g. "raw_idea"
             message: issue.message,
           })),
         });

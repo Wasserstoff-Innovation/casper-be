@@ -5,43 +5,15 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1758717224245,
-      "tag": "0000_fuzzy_bishop",
+      "when": 1760213570122,
+      "tag": "0000_nappy_wildside",
       "breakpoints": true
     },
     {
       "idx": 1,
       "version": "7",
-      "when": 1758802446712,
-      "tag": "0001_lyrical_micromacro",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1758807185229,
-      "tag": "0002_spotty_reptil",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1759320743858,
-      "tag": "0003_same_shatterstar",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1759910084515,
-      "tag": "0004_shiny_callisto",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "7",
-      "when": 1759911092027,
-      "tag": "0005_demonic_joystick",
+      "when": 1760218011987,
+      "tag": "0001_curved_valkyrie",
       "breakpoints": true
     }
   ]

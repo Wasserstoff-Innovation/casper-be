@@ -5,7 +5,7 @@ import { authenticateUser } from '../middleware';
 
 
 const router = express.Router();
-const upload = multer(); 
+export const upload = multer(); 
 router.post('/jobs', authenticateUser,upload.single('file'), BrandProfileController.createJob);
 router.get('/jobs/:job_id', authenticateUser,BrandProfileController.getJobStatus);
 router.get('/:profile_id',authenticateUser, BrandProfileController.getProfile);
