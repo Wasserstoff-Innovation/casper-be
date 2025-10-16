@@ -6,11 +6,13 @@ const validateRequest =
   (req: Request, res: Response, next: NextFunction) => {
     try {
       // Parse the body directly
-      console.log("Validating request with schema:", schema);
-      console.log("Request body:", req.body);
-      schema.parse(req.body);
-      schema.parse(req.params);
-      schema.parse(req.query);
+      // console.log("Validating request with schema:", schema);
+      // console.log("Request body:", req.body);
+       schema.parse({
+        body: req.body,
+        params: req.params,
+        query: req.query,
+      });
       next();
     } catch (err) {
       if (err instanceof ZodError) {

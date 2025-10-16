@@ -46,7 +46,6 @@ export class CampaignPlanController {
       const campaignPlan = await CampaignPlanService.createCampaignPlan(userId, payload);
 
       return res.status(201).json({
-        message: "Campaign plan created successfully",
         campaignPlan,
       });
     } catch (error: any) {

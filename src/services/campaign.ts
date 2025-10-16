@@ -24,40 +24,59 @@ export class CampaignPlanService {
       throw new Error(error.response?.data?.detail[0].msg || error.message || "Unknown error");
     }
   }
-  static async createCampaignPlan(userId: number, payload: any) {
-    try {
-      console.log("payload.......text.",payload)
-      // const generateStructuredData:any = await axios.post(
-      //   `${API_BASE_URL}/parse-from-text`,
-      //   payload
-      // );
-      // console.log("generateStructuredData........",generateStructuredData)
-      // generateStructuredData.brand_profile_id = payload.brand_profile_id;
-      const response = await axios.post(`${API_BASE_URL}`, payload);
-      const campaignData = response.data;
-      console.log("campaignData........",campaignData)
-      const checkBrandProfile = await db.select().from(brandProfiles).where(eq(brandProfiles.profileId, payload.brand_profile_id));
-      if(checkBrandProfile.length > 0){
-        const [newPlan] = await db
-          .insert(campaignPlans)
-          .values({
-            userId,
-            brandProfileId: checkBrandProfile[0].id,
-            campaignId: campaignData._id,
-            data: campaignData, 
-          })
-          .returning();
-        newPlan.brandProfileId = payload.brand_profile_id;
-        return newPlan;
-      }
-      else{
-        return { message: "brand profile not found" };
-      }
-    } catch (error: any) {
-      console.error("Error creating campaign plan:", error.response?.data || error.message);
-      throw new Error(error.response?.data?.detail[0].msg || error.message || "Unknown error");
+static async createCampaignPlan(userId: number, payload: any) {
+  try {
+    const checkBrandProfile = await db
+      .select()
+      .from(brandProfiles)
+      .where(eq(brandProfiles.profileId, payload.brand_profile_id));
+
+    if (checkBrandProfile.length === 0) {
+      return { message: "Brand profile not found" };
     }
+    const brandProfileRecord = checkBrandProfile[0];
+    const existingPlan = await db
+      .select()
+      .from(campaignPlans)
+      .where(eq(campaignPlans.brandProfileId, brandProfileRecord.id));
+
+    if (existingPlan.length > 0) {
+      return {
+        message: "Campaign plan already exists for this brand profile",
+        existingPlan: existingPlan[0],
+      };
+    }
+
+    const response = await axios.post(`${API_BASE_URL}`, payload);
+    const campaignData = response.data;
+
+    const [newPlan] = await db
+      .insert(campaignPlans)
+      .values({
+        userId,
+        brandProfileId: brandProfileRecord.id,
+        campaignId: campaignData._id,
+        data: campaignData,
+      })
+      .returning();
+
+    newPlan.brandProfileId = payload.brand_profile_id;
+
+    return {
+      message: "New campaign plan created successfully",
+      data: newPlan,
+    };
+
+  } catch (error: any) {
+    console.error("Error creating campaign plan:", error.response?.data || error.message);
+    return {
+      message: error.response?.data?.detail?.[0]?.msg || error.message || "Unknown error",
+      status: "error",
+    };
   }
+}
+
+
 
   static async getCampaignPlan(campaignPlanId:string) {
     try {
