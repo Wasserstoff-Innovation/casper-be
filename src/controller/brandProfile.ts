@@ -9,13 +9,38 @@ export default class BrandProfileController {
       return res.status(401).json({ error: "Unauthorized" });
      }
     const userId = user.userId;
+    
+    // v2 API parameters
+    const url = req.body.url || req.body.website; // Support both 'url' and 'website' for backward compatibility
+    const include_screenshots = req.body.include_screenshots !== undefined ? req.body.include_screenshots : true;
+    const include_web_search = req.body.include_web_search !== undefined ? req.body.include_web_search : true;
+    const max_pages = req.body.max_pages || 20;
+    
+    // Legacy parameters (for backward compatibility)
     const source_type = req.body.source_type;
-    const website = req.body.url || null;
     const file = req.file?.buffer || null;
-    console.log("userId and source_type required",userId,source_type,website);  
-    if (!userId || !source_type) return res.status(400).json({ message: 'userId and source_type required' });
+    
+    console.log("Creating brand profile job", { userId, url, include_screenshots, include_web_search, max_pages });  
+    
+    if (!userId) {
+      return res.status(400).json({ message: 'userId required' });
+    }
+    
+    if (!url) {
+      return res.status(400).json({ message: 'url is required for brand intelligence analysis' });
+    }
 
-    const result = await BrandProfileService.createBrandProfileJob({ userId, source_type, website, file });
+    const result = await BrandProfileService.createBrandProfileJob({ 
+      userId, 
+      url,
+      include_screenshots,
+      include_web_search,
+      max_pages,
+      // Legacy support
+      source_type,
+      website: url, // For backward compatibility
+      file
+    });
     res.status(201).json(result);
   } catch (err: any) {
     res.status(500).json({ message: err.message });

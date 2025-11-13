@@ -12,7 +12,8 @@
     "migration:generate": "drizzle-kit generate",
     "migration:push": "node -r esbuild-register src/config/migrate.ts",
     "drizzle:studio": "drizzle-kit studio",
-    "migration:drop": "drizzle-kit drop"
+    "migration:drop": "drizzle-kit drop",
+    "clear:brands": "node scripts/clear_brand_data.js"
   },
   "dependencies": {
     "apple-auth": "^1.0.9",

@@ -15,8 +15,13 @@ export const brandProfiles = pgTable('brand_profiles', {
   userId: integer('user_id').references(() => users.id),
   jobId: text('job_id'),
   profileId: text('profile_id'),
-  data: jsonb('data'),
-  created_at: timestamp("created_at").defaultNow()
+  data: jsonb('data'), // Full response data for backward compatibility
+  brandKit: jsonb('brand_kit'), // v2: Complete brand documentation
+  brandScores: jsonb('brand_scores'), // v2: 7-dimensional scores
+  brandRoadmap: jsonb('brand_roadmap'), // v2: Prioritized tasks
+  status: varchar('status', { length: 50 }), // Job status: queued, processing, complete, failed
+  created_at: timestamp("created_at").defaultNow(),
+  updated_at: timestamp("updated_at").defaultNow()
 });
 
 export const brandKits = pgTable('brand_kits', {

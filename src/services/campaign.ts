@@ -4,7 +4,7 @@ import { brandProfiles, campaignPlans } from "../model/schema";
 import { eq } from "drizzle-orm";
 import { envConfigs } from "../config/envConfig";
 
-const API_BASE_URL = `${envConfigs.aiBackendUrl}/campaigns`;
+const API_BASE_URL = `${envConfigs.aiBackendUrl}/v1/campaigns`;
 
 export class CampaignPlanService {
 

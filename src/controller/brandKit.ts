@@ -2,6 +2,33 @@ import { Request, Response } from "express";
 import BrandKitsService from "../services/brandKit";
 
 export default class BrandKitController {
+  
+  // NEW: Auto-create brand kit from v2 brand profile
+  static createBrandKitFromProfile = async (req: Request, res: Response) => {
+    try {
+      const user: any = req.user;
+      if (!req.user) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+      
+      const userId = user.userId;
+      const { brandProfileId } = req.body;
+      
+      console.log("Creating brand kit from v2 profile", { userId, brandProfileId });
+      
+      if (!userId || !brandProfileId) {
+        return res.status(400).json({ error: "userId and brandProfileId are required" });
+      }
+
+      const result = await BrandKitsService.createBrandKitFromV2Profile(userId, brandProfileId);
+      res.status(201).json(result);
+      
+    } catch (err: any) {
+      console.error(err);
+      res.status(500).json({ error: err.message });
+    }
+  };
+
   static createBrandKit = async (req: Request, res: Response) => {
     try {
       const files = req.files as { [fieldname: string]: Express.Multer.File[] };
@@ -57,6 +84,47 @@ export default class BrandKitController {
       res.status(500).json({ message: error.message });
     }
   }
+
+  // NEW: Create brand kit manually (without AI analysis)
+  static createManualBrandKit = async (req: Request, res: Response) => {
+    try {
+      const user: any = req.user;
+      if (!req.user) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+      
+      const userId = user.userId;
+      const { kitData } = req.body;
+      
+      console.log("Creating manual brand kit", { userId });
+      
+      if (!userId) {
+        return res.status(400).json({ error: "userId is required" });
+      }
+
+      if (!kitData || !kitData.comprehensive) {
+        return res.status(400).json({ error: "kitData.comprehensive is required" });
+      }
+
+      // Validate required fields
+      if (!kitData.comprehensive.meta?.brand_name?.value) {
+        return res.status(400).json({ error: "brand_name is required" });
+      }
+      if (!kitData.comprehensive.meta?.canonical_domain?.value) {
+        return res.status(400).json({ error: "canonical_domain is required" });
+      }
+      if (!kitData.comprehensive.visual_identity?.logos?.primary_logo_url?.value) {
+        return res.status(400).json({ error: "primary_logo_url is required" });
+      }
+
+      const result = await BrandKitsService.createManualBrandKit(userId, kitData);
+      res.status(201).json(result);
+      
+    } catch (err: any) {
+      console.error("Error creating manual brand kit:", err);
+      res.status(500).json({ error: err.message });
+    }
+  };
 
    static async getBrandKitReport(req: Request, res: Response) {
     try {

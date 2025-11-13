@@ -14,7 +14,7 @@ export default class CalendarService {
       const checkStatus = await db.select().from(campaignPlans).where(eq(campaignPlans.campaignId, payload.campaignId));
       const plan_status = checkStatus[0]?.data?.plan_status;
       if (plan_status === "finalized") {
-        const response = await axios.post(`${envConfigs.aiBackendUrl}/campaigns/${payload.campaignId}/generate-calendar`, payload);
+        const response = await axios.post(`${envConfigs.aiBackendUrl}/v1/campaigns/${payload.campaignId}/generate-calendar`, payload);
         if (response.status === 202) {
           const checkCampaignPlan = await db.select().from(campaignPlans).where(eq(campaignPlans.campaignId, payload.campaignId));
           if (checkCampaignPlan.length > 0) {
@@ -40,7 +40,7 @@ export default class CalendarService {
 
   static getCalendar = async (job_id: string) => {
     try {
-      const response = await axios.get(`${envConfigs.aiBackendUrl}/calendars/jobs/${job_id}`);
+      const response = await axios.get(`${envConfigs.aiBackendUrl}/v1/calendars/jobs/${job_id}`);
       if (response.data.status === "complete") {
         await db
           .update(contentCalander)

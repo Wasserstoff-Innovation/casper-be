@@ -6,9 +6,82 @@ import { eq } from "drizzle-orm";
 import { envConfigs } from "../config/envConfig";
 
 // const API_BASE_URL = "http://127.0.0.1:8000/api/v1/brand-kits";
-const API_BASE_URL = `${envConfigs.aiBackendUrl}/brand-kits`;
+const API_BASE_URL = `${envConfigs.aiBackendUrl}/v1/brand-kits`;
 
 export default class BrandKitsService {
+  
+  // NEW: Auto-generate brand kit from v2 brand intelligence data
+  static async createBrandKitFromV2Profile(userId: number, brandProfileId: string) {
+    try {
+      console.log("Creating brand kit from v2 profile:", brandProfileId);
+      
+      // Get the brand profile with v2 data
+      const profile = await db.select()
+        .from(brandProfiles)
+        .where(eq(brandProfiles.profileId, brandProfileId))
+        .limit(1);
+
+      if (profile.length === 0) {
+        throw new Error('Brand profile not found');
+      }
+
+      const brandProfile = profile[0];
+
+      // Check if profile is complete
+      if (brandProfile.status !== 'complete' || !brandProfile.brandKit) {
+        throw new Error('Brand profile analysis is not complete yet');
+      }
+
+      // Transform v2 brand_kit data into brand kit format
+      const kitData = {
+        brand_name: brandProfile.brandKit.brand_name,
+        domain: brandProfile.brandKit.domain,
+        visual_identity: brandProfile.brandKit.visual_identity,
+        voice_and_tone: brandProfile.brandKit.voice_and_tone,
+        positioning: brandProfile.brandKit.positioning,
+        audience: brandProfile.brandKit.audience,
+        seo_foundation: brandProfile.brandKit.seo_foundation,
+        content_strategy: brandProfile.brandKit.content_strategy,
+        trust_elements: brandProfile.brandKit.trust_elements,
+        conversion_analysis: brandProfile.brandKit.conversion_analysis,
+        brand_scores: brandProfile.brandScores,
+        brand_roadmap: brandProfile.brandRoadmap,
+        generated_at: brandProfile.brandKit.generated_at,
+        source: 'v2_brand_intelligence'
+      };
+
+      // Save to brand_kits table
+      const savedKit = await db
+        .insert(brandKits)
+        .values({
+          userId,
+          brandProfileId: brandProfile.id,
+          kitData: kitData,
+          created_at: new Date(),
+          updated_at: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: brandKits.brandProfileId,
+          set: {
+            kitData: kitData,
+            updated_at: new Date(),
+          },
+        })
+        .returning();
+
+      savedKit[0].brandProfileId = brandProfileId;
+      return {
+        success: true,
+        message: 'Brand kit created successfully from v2 profile',
+        brandKit: savedKit[0]
+      };
+
+    } catch (error: any) {
+      console.error("Error creating brand kit from v2 profile:", error?.message || error);
+      throw new Error(error?.message || "Failed to create brand kit from v2 profile");
+    }
+  }
+
   static async createBrandKit(
     userId: number,
     brandProfileId: string,
@@ -73,6 +146,43 @@ export default class BrandKitsService {
     }
   }
 
+
+  // NEW: Create brand kit manually (no AI, no brand profile required)
+  static async createManualBrandKit(userId: number, kitData: any) {
+    try {
+      console.log("Creating manual brand kit for user:", userId);
+      
+      // Ensure format version and source are set
+      const formattedKitData = {
+        ...kitData,
+        format_version: kitData.format_version || '2.0',
+        source: 'manual',
+        generated_at: kitData.generated_at || new Date().toISOString(),
+      };
+
+      // Save to brand_kits table (brandProfileId can be null for manual kits)
+      const savedKit = await db
+        .insert(brandKits)
+        .values({
+          userId,
+          brandProfileId: null, // Manual kits don't require a brand profile
+          kitData: formattedKitData,
+          created_at: new Date(),
+          updated_at: new Date(),
+        })
+        .returning();
+
+      return {
+        success: true,
+        message: 'Manual brand kit created successfully',
+        brandKit: savedKit[0]
+      };
+
+    } catch (error: any) {
+      console.error("Error creating manual brand kit:", error?.message || error);
+      throw new Error(error?.message || "Failed to create manual brand kit");
+    }
+  }
 
   static async fetchBrandKit(kitId: string) {
     try {
