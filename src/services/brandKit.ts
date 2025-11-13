@@ -184,16 +184,115 @@ export default class BrandKitsService {
     }
   }
 
+  // NEW: Get brand kit by profile ID - checks both local DB and backend API
+  static async getBrandKitByProfileId(profileId: string) {
+    try {
+      // First, try to get from local database
+      const profile = await db.select()
+        .from(brandProfiles)
+        .where(eq(brandProfiles.profileId, profileId))
+        .limit(1);
+
+      if (profile.length > 0) {
+        const brandProfile = profile[0];
+        
+        // Check if we have a brand kit in local DB
+        const brandKit = await db.select()
+          .from(brandKits)
+          .where(eq(brandKits.brandProfileId, brandProfile.id))
+          .limit(1);
+
+        if (brandKit.length > 0 && brandKit[0].kitData) {
+          console.log('✅ Found brand kit in local database');
+          const kitData = brandKit[0].kitData as any;
+          
+          // Ensure comprehensive structure exists
+          if (!kitData.comprehensive) {
+            console.warn('⚠️ Brand kit missing comprehensive structure, may need re-analysis');
+            return null; // Signal re-analysis needed
+          }
+          
+          return kitData;
+        }
+
+        // If no local kit but profile is complete, try to re-analyze
+        if (brandProfile.status === 'complete' && brandProfile.brandKit) {
+          console.log('⚠️ No local brand kit found, but profile is complete. Attempting to create from profile data...');
+          // This will be handled by the re-analyze endpoint
+          return null; // Signal that re-analysis is needed
+        }
+
+        // If profile is complete, try fetching from backend with comprehensive format
+        if (brandProfile.status === 'complete' && brandProfile.jobId) {
+          try {
+            const response = await axios.get(`${envConfigs.aiBackendUrl}/v2/brand-intelligence/jobs/${brandProfile.jobId}?format=comprehensive`);
+            if (response.data.status === 'complete' && response.data.result) {
+              console.log('✅ Found brand kit data in backend API with comprehensive format');
+              // Backend returns comprehensive format directly - we can use it
+              const comprehensive = response.data.result.comprehensive;
+              if (comprehensive) {
+                // Return the comprehensive format directly
+                return {
+                  comprehensive: comprehensive,
+                  v2_raw: {
+                    brand_kit: response.data.result.brand_kit,
+                    brand_scores: response.data.result.brand_scores,
+                    brand_roadmap: response.data.result.brand_roadmap,
+                  },
+                  format_version: '2.0',
+                  source: 'v2_brand_intelligence_backend',
+                  generated_at: response.data.result.generated_at,
+                };
+              }
+              // If no comprehensive format, signal re-analysis needed
+              return null;
+            }
+          } catch (apiError: any) {
+            console.log('⚠️ Backend API unavailable:', apiError.message);
+          }
+        }
+      }
+
+      // If not found in local DB, try backend API (legacy v1 endpoint)
+      try {
+        const response = await axios.get(`${API_BASE_URL}/${profileId}`);
+        console.log('✅ Found brand kit in backend API (v1)');
+        return response.data;
+      } catch (apiError: any) {
+        if (apiError.response && apiError.response.status === 404) {
+          // Only say not available if both local DB and backend API don't have it
+          throw new Error(`Brand kit not found in database or backend API. Profile ID: ${profileId}`);
+        }
+        throw apiError;
+      }
+    } catch (error: any) {
+      console.error('❌ Error fetching brand kit:', error.message);
+      throw error;
+    }
+  }
+
   static async fetchBrandKit(kitId: string) {
     try {
+      // First try to get from local DB by kit ID
+      const kit = await db.select()
+        .from(brandKits)
+        .where(eq(brandKits.id, parseInt(kitId)))
+        .limit(1);
+
+      if (kit.length > 0 && kit[0].kitData) {
+        console.log('✅ Found brand kit in local database by ID');
+        return kit[0].kitData;
+      }
+
+      // Fallback to backend API
       const response = await axios.get(`${API_BASE_URL}/${kitId}`);
-      // Expected JSON format from the 3rd party
-      // console.log("response.data....",response.data)
       return response.data;
     } catch (error: any) {
       if (error.response && error.response.status === 422) {
-        // Handle validation error format
         return { detail: error.response.data.detail };
+      }
+      if (error.response && error.response.status === 404) {
+        throw new Error(`Brand kit not found in database or backend API. Kit ID: ${kitId}`);
       }
       throw new Error(error.message);
     }

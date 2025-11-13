@@ -30,15 +30,21 @@ export default class BrandProfileController {
       return res.status(400).json({ message: 'url is required for brand intelligence analysis' });
     }
 
+    // Support new modular analysis config
+    const depth = req.body.depth;
+    const config = req.body.config;
+    
     const result = await BrandProfileService.createBrandProfileJob({ 
       userId, 
       url,
+      depth,
+      config,
+      // Legacy support
       include_screenshots,
       include_web_search,
       max_pages,
-      // Legacy support
       source_type,
-      website: url, // For backward compatibility
+      website: url,
       file
     });
     res.status(201).json(result);
@@ -81,5 +87,27 @@ static getJobStatus = async (req: Request, res: Response) => {
   }
 };
 
+// NEW: Re-analyze existing job - transform and create/update brand kit
+static reAnalyzeBrandKit = async (req: Request, res: Response) => {
+  try {
+    const user: any = req.user;
+    if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    
+    const { job_id } = req.body;
+    if (!job_id) {
+      return res.status(400).json({ error: "job_id is required" });
+    }
+
+    console.log("Re-analyzing brand kit for job:", job_id);
+    
+    const result = await BrandProfileService.reAnalyzeBrandKit(job_id);
+    res.status(200).json(result);
+  } catch (err: any) {
+    console.error("Error re-analyzing brand kit:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
 
 }

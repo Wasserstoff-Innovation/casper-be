@@ -12,6 +12,8 @@ export const upload = multer();
 router.post('/jobs', authenticateUser, upload.single('file'), BrandProfileController.createJob);
 // GET /jobs/:job_id - Check job status
 router.get('/jobs/:job_id', authenticateUser, BrandProfileController.getJobStatus);
+// POST /re-analyze - Re-analyze existing job and create/update brand kit
+router.post('/re-analyze', authenticateUser, BrandProfileController.reAnalyzeBrandKit);
 // GET /:profile_id - Get brand profile (returns from database for v2)
 router.get('/:profile_id', authenticateUser, BrandProfileController.getProfile);
 
