@@ -5,6 +5,9 @@ import { JobService } from '../services/jobServices';
 import { carouselGenerations } from '../model/schema';
 import db from '../config/db';
 import { eq } from 'drizzle-orm';
+import { BrandIdentifier } from '../services/brandIdentifier';
+import { BrandDataExtractor } from '../services/brandDataExtractor';
+import { BrandAssetManager } from '../services/brandAssetManager';
 
 export class CarouselController {
   static async generateIdeas(req: Request, res: Response) {
@@ -35,11 +38,65 @@ export class CarouselController {
 
   static async generateVisuals(req: Request, res: Response) {
     try {
-      // console.log('🎨 Received request to generate visuals');
-
       const user: any = req.user;
       const userId = user?.userId;
       const formData: any = new FormData();
+      
+      // Step 1: Get brand_profile_id from frontend (if provided)
+      const brandProfileId = req.body.brand_profile_id || req.query.brand_profile_id;
+      
+      // Step 2: If brand_profile_id provided, auto-fetch brand data (only if manual input not provided)
+      if (brandProfileId) {
+        // Validate brand belongs to user
+        const validBrandId = await BrandIdentifier.validateBrand(userId, brandProfileId);
+        if (!validBrandId) {
+          return res.status(403).json({
+            success: false,
+            error: 'Invalid brand_profile_id or brand does not belong to user',
+          });
+        }
+        
+        // Auto-fetch brand guidelines ONLY if user didn't provide them manually
+        if (!req.body.brand_guidelines) {
+          try {
+            const guidelines = await BrandDataExtractor.extractBrandGuidelines(validBrandId);
+            req.body.brand_guidelines = JSON.stringify(guidelines);
+          } catch (error: any) {
+            console.warn('⚠️ Failed to fetch brand guidelines:', error.message);
+            return res.status(400).json({
+              success: false,
+              error: `Failed to fetch brand guidelines: ${error.message}`,
+            });
+          }
+        }
+        
+        // Auto-fetch logo file ONLY if user didn't upload one
+        const hasLogoFile = req.files && 
+          (Array.isArray(req.files) 
+            ? req.files.some(f => f.fieldname === 'logo_file')
+            : (req.files as Record<string, Express.Multer.File[]>)['logo_file']);
+        
+        if (!hasLogoFile) {
+          try {
+            const logoFile = await BrandAssetManager.getLogoFile(validBrandId, {
+              download_if_needed: true,
+              use_cache: true,
+            });
+            
+            if (logoFile && logoFile.type === 'buffer') {
+              formData.append('logo_file', logoFile.value as Buffer, {
+                filename: logoFile.filename || 'brand-logo.png',
+                contentType: logoFile.content_type || 'image/png',
+              });
+            }
+          } catch (error: any) {
+            console.warn('⚠️ Failed to fetch logo, continuing without logo file:', error.message);
+            // Continue - logo_url is in brand_guidelines JSON
+          }
+        }
+      }
+      // If brand_profile_id NOT provided, use manual input (existing behavior)
+      
       // ✅ Append text fields exactly as required by the external API
       if (req.body.frame_prompts) {
         formData.append('frame_prompts', req.body.frame_prompts);
@@ -53,7 +110,7 @@ export class CarouselController {
         formData.append('generate_images', req.body.generate_images);
       }
 
-      // ✅ Append files (mascot_file, logo_file, product_file)
+      // ✅ Append files (mascot_file, logo_file, product_file) - user uploads take priority
       if (req.files) {
         const files = req.files as Record<string, Express.Multer.File[]>;
         Object.entries(files).forEach(([key, fileArray]) => {

@@ -7,6 +7,9 @@ import db from '../config/db';
 import { printAdGenerations } from '../model/schema';
 import { MulterFiles } from '../utils/multer';
 import FormData from 'form-data';
+import { BrandIdentifier } from '../services/brandIdentifier';
+import { BrandDataExtractor } from '../services/brandDataExtractor';
+import { BrandAssetManager } from '../services/brandAssetManager';
 
 export class PrintAdController {
   static async generateAd(req: Request, res: Response) {
@@ -16,23 +19,63 @@ export class PrintAdController {
       if (!req.body.campaign_data) {
         throw new ImageGenerationError('Campaign data is required', 400);
       }
-      if (!req.files || !Array.isArray(req.files) || req.files.length === 0) {
-        throw new ImageGenerationError('Files are required', 400);
-      }
+      
       const formData = new FormData();
       formData.append('campaign_data', (req.body.campaign_data));
-      const filesArray = req.files as Express.Multer.File[];
-      if (filesArray.length < 1) {
-        throw new ImageGenerationError('Brand guidelines file is required', 400);
+      
+      // Check if brand_profile_id provided
+      const brandProfileId = req.body.brand_profile_id || req.query.brand_profile_id;
+      const filesArray = (req.files && Array.isArray(req.files)) ? req.files as Express.Multer.File[] : [];
+      
+      // Auto-fetch brand guidelines file ONLY if user didn't upload one
+      if (brandProfileId && filesArray.length < 1) {
+        const validBrandId = await BrandIdentifier.validateBrand(userId, brandProfileId);
+        if (validBrandId) {
+          try {
+            const guidelines = await BrandDataExtractor.extractBrandGuidelines(validBrandId);
+            const guidelinesJson = JSON.stringify(guidelines, null, 2);
+            const guidelinesBuffer = Buffer.from(guidelinesJson);
+            formData.append('brand_guidelines_file', guidelinesBuffer, {
+              filename: 'brand-guidelines.json',
+              contentType: 'application/json'
+            });
+          } catch (error: any) {
+            throw new ImageGenerationError(`Failed to fetch brand guidelines: ${error.message}`, 400);
+          }
+        }
+      } else if (filesArray.length < 1) {
+        throw new ImageGenerationError('Brand guidelines file is required (or provide brand_profile_id)', 400);
+      } else {
+        // Use user-uploaded file (takes priority)
+        formData.append('brand_guidelines_file', filesArray[0].buffer, {
+          filename: filesArray[0].originalname,
+          contentType: filesArray[0].mimetype
+        });
       }
-      // console.log('Appending brand_guidelines_file:', filesArray[0].originalname);
-      formData.append('brand_guidelines_file', filesArray[0].buffer, {
-        filename: filesArray[0].originalname,
-        contentType: filesArray[0].mimetype
-      });
 
-      if (filesArray.length > 1) {
-        // console.log('Appending logo_file:', filesArray[1].originalname);
+      // Auto-fetch logo file ONLY if user didn't upload one
+      if (brandProfileId && filesArray.length < 2) {
+        const validBrandId = await BrandIdentifier.validateBrand(userId, brandProfileId);
+        if (validBrandId) {
+          try {
+            const logoFile = await BrandAssetManager.getLogoFile(validBrandId, {
+              download_if_needed: true,
+              use_cache: true,
+            });
+            
+            if (logoFile && logoFile.type === 'buffer') {
+              formData.append('logo_file', logoFile.value as Buffer, {
+                filename: logoFile.filename || 'brand-logo.png',
+                contentType: logoFile.content_type || 'image/png'
+              });
+            }
+          } catch (error: any) {
+            console.warn('⚠️ Failed to fetch logo for print ad:', error.message);
+            // Continue without logo file
+          }
+        }
+      } else if (filesArray.length > 1) {
+        // Use user-uploaded logo (takes priority)
         formData.append('logo_file', filesArray[1].buffer, {
           filename: filesArray[1].originalname,
           contentType: filesArray[1].mimetype

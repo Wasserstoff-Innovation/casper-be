@@ -7,10 +7,37 @@ import db from '../config/db';
 import { mascotGenerations } from '../model/schema';
 import FormData from 'form-data';
 import { MulterFiles } from '../utils/multer';
+import { BrandIdentifier } from '../services/brandIdentifier';
+import { BrandDataExtractor } from '../services/brandDataExtractor';
 
 export class MascotController {
   static async generatePrompts(req: Request, res: Response) {
     try {
+      const user: any = req.user;
+      const userId = user?.userId;
+      const brandProfileId = req.body.brand_profile_id || req.query.brand_profile_id;
+      
+      // If brand_profile_id provided, enhance request with brand context
+      if (brandProfileId) {
+        const validBrandId = await BrandIdentifier.validateBrand(userId, brandProfileId);
+        if (validBrandId) {
+          try {
+            const guidelines = await BrandDataExtractor.extractBrandGuidelines(validBrandId);
+            // Add brand context to prompt generation (if not already provided)
+            if (!req.body.brand_context) {
+              req.body.brand_context = {
+                colors: guidelines.visual_identity.primary_color_hex,
+                personality: guidelines.tone_voice.brand_personality,
+                audience: guidelines.brand_basics.target_audience,
+              };
+            }
+          } catch (error: any) {
+            console.warn('⚠️ Failed to fetch brand data for prompts:', error.message);
+            // Continue without brand context
+          }
+        }
+      }
+      
       const prompts = await mascotClient.post('/api/v1/mascot/prompts', req.body);
 
       res.json({

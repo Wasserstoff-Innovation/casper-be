@@ -17,9 +17,28 @@ export const brandProfiles = pgTable('brand_profiles', {
   profileId: text('profile_id'),
   data: jsonb('data'), // Full response data for backward compatibility
   brandKit: jsonb('brand_kit'), // v2: Complete brand documentation
-  brandScores: jsonb('brand_scores'), // v2: 7-dimensional scores
-  brandRoadmap: jsonb('brand_roadmap'), // v2: Prioritized tasks
+  brandScores: jsonb('brand_scores'), // v2: 7-dimensional scores with status
+  brandRoadmap: jsonb('brand_roadmap'), // v2: Prioritized tasks with gaps
+  analysis_context: jsonb('analysis_context'), // NEW: Wisdom Tree analysis context (entity type, persona, phases, etc.)
   status: varchar('status', { length: 50 }), // Job status: queued, processing, complete, failed
+  jobStartedAt: timestamp('job_started_at'), // When the job started processing
+  jobCompletedAt: timestamp('job_completed_at'), // When the job finished
+  jobError: text('job_error'), // Error message if job failed
+
+  // Summary columns for fast queries (extracted from JSONB)
+  canonical_domain: text('canonical_domain'),
+  brand_name: text('brand_name'),
+  persona_id: text('persona_id'),
+  entity_type: text('entity_type'),
+  business_model: text('business_model'),
+  channel_orientation: text('channel_orientation'),
+  overall_score: integer('overall_score'), // 0-100
+  completeness_score: integer('completeness_score'), // 0-100
+  total_critical_gaps: integer('total_critical_gaps'),
+  has_social_profiles: integer('has_social_profiles').default(0), // 0 or 1 (boolean)
+  has_blog: integer('has_blog').default(0), // 0 or 1 (boolean)
+  has_review_sites: integer('has_review_sites').default(0), // 0 or 1 (boolean)
+
   created_at: timestamp("created_at").defaultNow(),
   updated_at: timestamp("updated_at").defaultNow()
 });
@@ -170,6 +189,75 @@ export const printAdGenerations = pgTable('print_ad_generations', {
   createdAt: timestamp('created_at').defaultNow()
 });
 
+// Brand Roadmap Campaigns - Normalized from brand_roadmap JSONB
+export const brandRoadmapCampaigns = pgTable('brand_roadmap_campaigns', {
+  id: text('id').primaryKey(), // campaign.id from roadmap
+  brandProfileId: integer('brand_profile_id').references(() => brandProfiles.id).notNull(),
+  persona: text('persona'),
+  title: text('title'),
+  shortTitle: text('short_title'),
+  description: text('description'),
+  category: text('category'),
+  recommendedOrder: integer('recommended_order'),
+  estimatedTimeline: text('estimated_timeline'),
+  dimensionsAffected: jsonb('dimensions_affected').$type<string[]>(),
+  priorityScore: integer('priority_score'),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow()
+});
+
+// Brand Roadmap Milestones
+export const brandRoadmapMilestones = pgTable('brand_roadmap_milestones', {
+  id: text('id').primaryKey(), // milestone.id
+  campaignId: text('campaign_id').references(() => brandRoadmapCampaigns.id).notNull(),
+  title: text('title'),
+  goal: text('goal'),
+  estimatedDuration: text('estimated_duration'),
+  orderIndex: integer('order_index'),
+  totalTasks: integer('total_tasks'),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow()
+});
+
+// Brand Roadmap Tasks
+export const brandRoadmapTasks = pgTable('brand_roadmap_tasks', {
+  id: text('id').primaryKey(), // task.id
+  brandProfileId: integer('brand_profile_id').references(() => brandProfiles.id).notNull(),
+  campaignId: text('campaign_id').references(() => brandRoadmapCampaigns.id),
+  milestoneId: text('milestone_id').references(() => brandRoadmapMilestones.id),
+
+  title: text('title'),
+  description: text('description'),
+  category: text('category'), // research | copy | design | dev | ops | outreach
+  impact: text('impact'), // low | medium | high
+  effort: text('effort'), // low | medium | high
+  targets: jsonb('targets').$type<string[]>(), // ["verbal_identity.tagline", ...]
+  suggestedOwner: text('suggested_owner'), // founder | marketing | design
+  suggestedTools: jsonb('suggested_tools').$type<string[]>(), // ["ai_copywriter","crm"]
+  priorityScore: integer('priority_score'),
+  status: varchar('status', { length: 50 }).default('pending'), // pending | in_progress | completed | skipped
+  dependsOn: jsonb('depends_on').$type<string[]>(), // ["other_task_id"]
+  acceptanceCriteria: text('acceptance_criteria'),
+
+  isQuickWin: integer('is_quick_win').default(0), // 0 or 1 (boolean)
+
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow()
+});
+
+// Brand Social Profiles - Normalized from external_presence
+export const brandSocialProfiles = pgTable('brand_social_profiles', {
+  id: serial('id').primaryKey(),
+  brandProfileId: integer('brand_profile_id').references(() => brandProfiles.id).notNull(),
+  platform: text('platform'), // LinkedIn, Twitter, Instagram, YouTube
+  profileType: text('profile_type'), // company | personal
+  url: text('url'),
+  status: text('status'), // found | inferred | missing
+  source: jsonb('source').$type<string[]>(), // ["onsite","web_search"]
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow()
+});
+
 // // User → BrandProfiles
 export const usersRelations = relations(users, ({ many }) => ({
   brandProfiles: many(brandProfiles),
@@ -187,11 +275,14 @@ export const usersRelations = relations(users, ({ many }) => ({
 }));
 
 
-// BrandProfile → BrandKits + CampaignPlans
+// BrandProfile → BrandKits + CampaignPlans + Roadmap + SocialProfiles
 export const brandProfilesRelations = relations(brandProfiles, ({ many, one }) => ({
   user: one(users, { fields: [brandProfiles.userId], references: [users.id] }),
   brandKits: one(brandKits),
   campaignPlans: one(campaignPlans),
+  roadmapCampaigns: many(brandRoadmapCampaigns),
+  roadmapTasks: many(brandRoadmapTasks),
+  socialProfiles: many(brandSocialProfiles),
 }));
 
 // BrandKit → User, BrandProfile
@@ -247,4 +338,27 @@ export const imageGenerationJobsRelations = relations(imageGenerationJobs, ({ on
   }),
 }));
 
+// Roadmap Campaign Relations
+export const brandRoadmapCampaignsRelations = relations(brandRoadmapCampaigns, ({ one, many }) => ({
+  brandProfile: one(brandProfiles, { fields: [brandRoadmapCampaigns.brandProfileId], references: [brandProfiles.id] }),
+  milestones: many(brandRoadmapMilestones),
+  tasks: many(brandRoadmapTasks),
+}));
 
+// Roadmap Milestone Relations
+export const brandRoadmapMilestonesRelations = relations(brandRoadmapMilestones, ({ one, many }) => ({
+  campaign: one(brandRoadmapCampaigns, { fields: [brandRoadmapMilestones.campaignId], references: [brandRoadmapCampaigns.id] }),
+  tasks: many(brandRoadmapTasks),
+}));
+
+// Roadmap Task Relations
+export const brandRoadmapTasksRelations = relations(brandRoadmapTasks, ({ one }) => ({
+  brandProfile: one(brandProfiles, { fields: [brandRoadmapTasks.brandProfileId], references: [brandProfiles.id] }),
+  campaign: one(brandRoadmapCampaigns, { fields: [brandRoadmapTasks.campaignId], references: [brandRoadmapCampaigns.id] }),
+  milestone: one(brandRoadmapMilestones, { fields: [brandRoadmapTasks.milestoneId], references: [brandRoadmapMilestones.id] }),
+}));
+
+// Social Profiles Relations
+export const brandSocialProfilesRelations = relations(brandSocialProfiles, ({ one }) => ({
+  brandProfile: one(brandProfiles, { fields: [brandSocialProfiles.brandProfileId], references: [brandProfiles.id] }),
+}));

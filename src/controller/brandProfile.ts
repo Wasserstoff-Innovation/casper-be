@@ -1,5 +1,8 @@
 import { Request, Response } from "express";
 import BrandProfileService from "../services/brandProfile";
+import { BrandIntelligenceService } from "../services/brandIntelligence";
+import axios from "axios";
+import { envConfigs } from "../config/envConfig";
 
 export default class BrandProfileController { 
   static createJob = async (req: Request, res: Response) => {
@@ -33,11 +36,13 @@ export default class BrandProfileController {
     // Support new modular analysis config
     const depth = req.body.depth;
     const config = req.body.config;
+    const override_persona = req.body.override_persona; // NEW: Wisdom Tree persona override
     
     const result = await BrandProfileService.createBrandProfileJob({ 
       userId, 
       url,
       depth,
+      override_persona, // NEW
       config,
       // Legacy support
       include_screenshots,
@@ -80,6 +85,18 @@ static getJobStatus = async (req: Request, res: Response) => {
     const { profile_id } = req.params;
     if (!profile_id) return res.status(400).json({ message: 'profile_id required' });
 
+    // OPTIMIZED: Use summary view instead of raw database dump
+    // This reduces payload from 400KB to 10-50KB
+    const profileId = parseInt(profile_id, 10);
+    if (!isNaN(profileId)) {
+      // If it's a numeric ID, use the new optimized summary view
+      console.log("Using optimized summary view for profile:", profileId);
+      const summaryView = await BrandIntelligenceService.getSummaryView(profileId);
+      return res.status(200).json(summaryView);
+    }
+
+    // Fallback for legacy string-based profile IDs (job_id format)
+    console.log("Using legacy profile lookup for:", profile_id);
     const result = await BrandProfileService.getBrandProfile(profile_id);
     res.status(200).json(result);
   } catch (err: any) {
@@ -108,6 +125,289 @@ static reAnalyzeBrandKit = async (req: Request, res: Response) => {
     console.error("Error re-analyzing brand kit:", err);
     res.status(500).json({ error: err.message });
   }
+};
+
+// NEW: List available personas
+static listPersonas = async (req: Request, res: Response) => {
+  try {
+    const user: any = req.user;
+    if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const response = await axios.get(
+      `${envConfigs.aiBackendUrl}/v2/brand-intelligence/wisdom-tree/personas`
+    );
+
+    res.status(200).json(response.data);
+  } catch (err: any) {
+    console.error("Error listing personas:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// NEW: Get brand intelligence summary view (lightweight for drawer)
+static getSummaryView = async (req: Request, res: Response) => {
+  try {
+    const user: any = req.user;
+    if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const profileId = parseInt(req.params.id, 10);
+    if (isNaN(profileId)) {
+      return res.status(400).json({ error: "Invalid profile ID" });
+    }
+
+    console.log("Getting brand intelligence summary for profile:", profileId);
+
+    const summaryView = await BrandIntelligenceService.getSummaryView(profileId);
+    res.status(200).json(summaryView);
+  } catch (err: any) {
+    console.error("Error getting summary view:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// NEW: Get brand intelligence detail view (full data)
+static getDetailView = async (req: Request, res: Response) => {
+  try {
+    const user: any = req.user;
+    if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const profileId = parseInt(req.params.id, 10);
+    if (isNaN(profileId)) {
+      return res.status(400).json({ error: "Invalid profile ID" });
+    }
+
+    console.log("Getting brand intelligence detail for profile:", profileId);
+
+    const detailView = await BrandIntelligenceService.getDetailView(profileId);
+    res.status(200).json(detailView);
+  } catch (err: any) {
+    console.error("Error getting detail view:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// NEW: List all brand profiles for a user with filtering
+static listProfiles = async (req: Request, res: Response) => {
+  try {
+    const user: any = req.user;
+    if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const userId = user.userId;
+    const filters = {
+      persona: req.query.persona as string | undefined,
+      minScore: req.query.min_score ? parseInt(req.query.min_score as string, 10) : undefined,
+      entityType: req.query.entity_type as string | undefined,
+      status: req.query.status as string | undefined,
+    };
+    const sort = req.query.sort as string | undefined || 'created_at';
+    const order = req.query.order as 'asc' | 'desc' | undefined || 'desc';
+    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
+    const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : 0;
+
+    console.log("Listing profiles for user:", userId, "with filters:", filters);
+
+    const result = await BrandIntelligenceService.listProfiles(userId, filters, sort, order, limit, offset);
+    res.status(200).json(result);
+  } catch (err: any) {
+    console.error("Error listing profiles:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// NEW: Update roadmap task status
+static updateTask = async (req: Request, res: Response) => {
+  try {
+    const user: any = req.user;
+    if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const { task_id } = req.params;
+    const { status, acceptanceCriteria } = req.body;
+
+    if (!task_id) {
+      return res.status(400).json({ error: "task_id is required" });
+    }
+
+    console.log("Updating task:", task_id, "with status:", status);
+
+    const result = await BrandIntelligenceService.updateTask(task_id, { status, acceptanceCriteria });
+    res.status(200).json(result);
+  } catch (err: any) {
+    console.error("Error updating task:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// NEW: Bulk update tasks
+static bulkUpdateTasks = async (req: Request, res: Response) => {
+  try {
+    const user: any = req.user;
+    if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const { taskIds, updates } = req.body;
+
+    if (!taskIds || !Array.isArray(taskIds) || taskIds.length === 0) {
+      return res.status(400).json({ error: "taskIds array is required" });
+    }
+
+    if (!updates || typeof updates !== 'object') {
+      return res.status(400).json({ error: "updates object is required" });
+    }
+
+    console.log("Bulk updating", taskIds.length, "tasks");
+
+    const result = await BrandIntelligenceService.bulkUpdateTasks(taskIds, updates);
+    res.status(200).json(result);
+  } catch (err: any) {
+    console.error("Error bulk updating tasks:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Get job history for the user
+static getJobHistory = async (req: Request, res: Response) => {
+  try {
+    const user: any = req.user;
+    if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const userId = user.userId;
+
+    console.log("Fetching job history for user:", userId);
+    const jobs = await BrandProfileService.getJobHistory(userId);
+
+    res.status(200).json({ jobs });
+  } catch (err: any) {
+    console.error("Error fetching job history:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Get detailed job information by job_id
+static getJobDetailsById = async (req: Request, res: Response) => {
+  try {
+    const user: any = req.user;
+    if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const userId = user.userId;
+    const { job_id } = req.params;
+
+    if (!job_id) {
+      return res.status(400).json({ error: "job_id is required" });
+    }
+
+    console.log("Fetching job details for job_id:", job_id);
+    const jobDetails = await BrandProfileService.getJobDetails(job_id, userId);
+
+    if (!jobDetails) {
+      return res.status(404).json({ error: "Job not found" });
+    }
+
+    res.status(200).json({ job: jobDetails });
+  } catch (err: any) {
+    console.error("Error fetching job details:", err);
+    if (err.message.includes('Unauthorized')) {
+      return res.status(403).json({ error: err.message });
+    }
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Re-analyze specific module for a brand profile
+static analyzeModule = async (req: Request, res: Response) => {
+  try {
+    const user: any = req.user;
+    if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const userId = user.userId;
+    const { id } = req.params;
+    const { module, include_screenshots, include_web_search } = req.body;
+
+    if (!id) {
+      return res.status(400).json({ error: "profile id is required" });
+    }
+
+    if (!module) {
+      return res.status(400).json({ error: "module is required" });
+    }
+
+    const profileId = parseInt(id, 10);
+    if (isNaN(profileId)) {
+      return res.status(400).json({ error: "Invalid profile id" });
+    }
+
+    console.log(`Re-analyzing module "${module}" for profile ${profileId}`);
+
+    const result = await BrandProfileService.analyzeModule(profileId, userId, module, {
+      include_screenshots,
+      include_web_search,
+    });
+
+    res.status(200).json(result);
+  } catch (err: any) {
+    console.error("Error analyzing module:", err);
+    if (err.message.includes('Unauthorized')) {
+      return res.status(403).json({ error: err.message });
+    }
+    if (err.message.includes('not found')) {
+      return res.status(404).json({ error: err.message });
+    }
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Quick-action module analysis endpoints
+static analyzeVisualIdentity = async (req: Request, res: Response) => {
+  req.body.module = 'visual_identity';
+  return BrandProfileController.analyzeModule(req, res);
+};
+
+static analyzeSEO = async (req: Request, res: Response) => {
+  req.body.module = 'seo_identity';
+  return BrandProfileController.analyzeModule(req, res);
+};
+
+static analyzeTrustElements = async (req: Request, res: Response) => {
+  req.body.module = 'proof_trust';
+  return BrandProfileController.analyzeModule(req, res);
+};
+
+static analyzeAudience = async (req: Request, res: Response) => {
+  req.body.module = 'audience_positioning';
+  return BrandProfileController.analyzeModule(req, res);
+};
+
+static analyzeMessaging = async (req: Request, res: Response) => {
+  req.body.module = 'verbal_identity';
+  return BrandProfileController.analyzeModule(req, res);
+};
+
+static analyzeContent = async (req: Request, res: Response) => {
+  req.body.module = 'content_assets';
+  return BrandProfileController.analyzeModule(req, res);
+};
+
+static analyzePricing = async (req: Request, res: Response) => {
+  req.body.module = 'product_offers';
+  return BrandProfileController.analyzeModule(req, res);
+};
+
+static analyzeSocial = async (req: Request, res: Response) => {
+  req.body.module = 'external_presence';
+  return BrandProfileController.analyzeModule(req, res);
 };
 
 }

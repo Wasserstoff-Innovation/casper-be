@@ -6,6 +6,8 @@ import { JobService } from '../services/jobServices';
 import db from '../config/db';
 import { memeGenerations } from '../model/schema';
 import { MulterFiles } from '../utils/multer';
+import { BrandIdentifier } from '../services/brandIdentifier';
+import { BrandAssetManager } from '../services/brandAssetManager';
 
 export class MemeController {
   static async generateMeme(req: Request, res: Response) {
@@ -23,6 +25,42 @@ export class MemeController {
       formData.append('text', req.body.text);
       formData.append('art_style', req.body.artStyle);
 
+      // Check if brand_profile_id provided
+      const brandProfileId = req.body.brand_profile_id || req.query.brand_profile_id;
+      
+      if (brandProfileId) {
+        const validBrandId = await BrandIdentifier.validateBrand(userId, brandProfileId);
+        if (validBrandId) {
+          // Auto-fetch logo/mascot ONLY if user didn't provide them manually
+          const hasLogoFile = req.files && 
+            (Array.isArray(req.files) 
+              ? req.files.some(f => f.fieldname === 'logo_file')
+              : (req.files as Record<string, Express.Multer.File[]>)['logo_file']);
+          
+          if (!hasLogoFile && !req.body.logoDesc) {
+            try {
+              const logoFile = await BrandAssetManager.getLogoFile(validBrandId, {
+                download_if_needed: true,
+                use_cache: true,
+              });
+              
+              if (logoFile && logoFile.type === 'buffer') {
+                const blob = new Blob([logoFile.value as Buffer], { 
+                  type: logoFile.content_type || 'image/png' 
+                });
+                formData.append('logo_file', blob, logoFile.filename || 'brand-logo.png');
+              } else if (logoFile && logoFile.type === 'url') {
+                // If only URL available, add as description
+                req.body.logoDesc = `Brand logo from ${logoFile.value}`;
+              }
+            } catch (error: any) {
+              console.warn('⚠️ Failed to fetch logo for meme:', error.message);
+            }
+          }
+        }
+      }
+      
+      // Use manual input if provided (takes priority)
       if (req.body.logoDesc) formData.append('logo_desc', req.body.logoDesc);
       if (req.body.mascotDesc) formData.append('mascot_desc', req.body.mascotDesc);
       if (req.body.productDesc) formData.append('product_desc', req.body.productDesc);
