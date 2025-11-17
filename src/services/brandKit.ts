@@ -188,10 +188,17 @@ export default class BrandKitsService {
   static async getBrandKitByProfileId(profileId: string) {
     try {
       // First, try to get from local database
-      const profile = await db.select()
-        .from(brandProfiles)
-        .where(eq(brandProfiles.profileId, profileId))
-        .limit(1);
+      // Handle both numeric ID and string profileId
+      const isNumeric = !isNaN(Number(profileId));
+      const profile = isNumeric
+        ? await db.select()
+            .from(brandProfiles)
+            .where(eq(brandProfiles.id, parseInt(profileId)))
+            .limit(1)
+        : await db.select()
+            .from(brandProfiles)
+            .where(eq(brandProfiles.profileId, profileId))
+            .limit(1);
 
       if (profile.length > 0) {
         const brandProfile = profile[0];

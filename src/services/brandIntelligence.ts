@@ -10,6 +10,7 @@ import { eq, and, count } from 'drizzle-orm';
 import {
   BrandIntelligenceView,
   BrandIntelligenceDetailView,
+  BrandProfileListItem,
   BrandScoresView,
   ChannelsOverviewView,
   BrandKitSummaryView,
@@ -546,6 +547,7 @@ export class BrandIntelligenceService {
 
   /**
    * List all brand profiles for a user with filtering and pagination
+   * Returns lightweight list items for efficient list rendering
    */
   static async listProfiles(
     userId: number,
@@ -559,7 +561,7 @@ export class BrandIntelligenceService {
     order: 'asc' | 'desc' = 'desc',
     limit: number = 20,
     offset: number = 0
-  ): Promise<{ profiles: BrandIntelligenceView[]; total: number }> {
+  ): Promise<{ profiles: BrandProfileListItem[]; total: number }> {
     const { gte, desc: descOrder, asc: ascOrder } = await import('drizzle-orm');
 
     // Build WHERE conditions
@@ -604,15 +606,28 @@ export class BrandIntelligenceService {
 
     const total = totalResult[0]?.count || 0;
 
-    // Build summary views for each profile
-    const summaryViews = await Promise.all(
-      profiles
-        .filter((p: any) => p.status === 'complete')
-        .map((p: any) => this.getSummaryView(p.id))
-    );
+    // Build lightweight list items (no heavy processing)
+    const listItems: BrandProfileListItem[] = profiles
+      .filter((p: any) => p.status === 'complete')
+      .map((p: any) => {
+        // Extract logo from brand kit if available
+        const getValue = getFieldValue;
+        const brandKit = p.brandKit;
+        const logo = brandKit?.visual_identity?.logos?.primary_logo_url
+          ? getValue(brandKit.visual_identity.logos.primary_logo_url)
+          : null;
+
+        return {
+          id: p.id,
+          domain: p.canonical_domain || 'unknown',
+          brandName: p.brand_name,
+          logo,
+          personaId: p.persona_id,
+        };
+      });
 
     return {
-      profiles: summaryViews,
+      profiles: listItems,
       total: typeof total === 'number' ? total : parseInt(total as string, 10),
     };
   }

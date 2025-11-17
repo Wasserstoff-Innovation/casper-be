@@ -34,6 +34,18 @@ export interface UICriticalGap {
 }
 
 // ============================================================================
+// List Item (ultra-lightweight for list views)
+// ============================================================================
+
+export interface BrandProfileListItem {
+  id: number;               // brand_profile.id
+  domain: string;
+  brandName: string | null;
+  logo: string | null;      // primary logo URL
+  personaId: string | null;
+}
+
+// ============================================================================
 // Summary View (for drawer / list)
 // ============================================================================
 
