@@ -1,10 +1,8 @@
 import { Request, Response } from 'express';
 import { memeClient } from '../services/apiClient';
 import { handleApiError, ImageGenerationError, withErrorHandling } from '../utils/errorHandler';
-import { desc, eq } from 'drizzle-orm';
 import { JobService } from '../services/jobServices';
-import db from '../config/db';
-import { memeGenerations } from '../model/schema';
+import { MemeGeneration } from '../models';
 import { MulterFiles } from '../utils/multer';
 import { BrandIdentifier } from '../services/brandIdentifier';
 import { BrandAssetManager } from '../services/brandAssetManager';
@@ -127,9 +125,7 @@ export class MemeController {
         }
 
         if (job.status === 'completed' || job.status === 'failed') {
-          const [meme] = await db.select()
-            .from(memeGenerations)
-            .where(eq(memeGenerations.jobId, jobId));
+          const meme = await MemeGeneration.findOne({ jobId: jobId });
 
           return {
             job_id: jobId,
@@ -150,14 +146,16 @@ export class MemeController {
           });
 
           if (status.status === 'completed' && status.result) {
-            await db.update(memeGenerations)
-              .set({
+            await MemeGeneration.findOneAndUpdate(
+              { jobId: jobId },
+              {
                 imageUrl: status.result.image_url,
                 memeConcept: status.result.meme_concept,
                 humorStyle: status.result.humor_style,
                 templateUsed: status.result.template_used
-              })
-              .where(eq(memeGenerations.jobId, jobId));
+              },
+              { new: true }
+            );
           }
         }
 
@@ -179,12 +177,10 @@ export class MemeController {
       const userId = user.userId;
       const { limit = 20, offset = 0 } = req.query;
 
-      const memes = await db.select()
-        .from(memeGenerations)
-        .where(eq(memeGenerations.userId, userId))
-        .orderBy(desc(memeGenerations.createdAt))
+      const memes = await MemeGeneration.find({ userId: userId })
+        .sort({ createdAt: -1 })
         .limit(Number(limit))
-        .offset(Number(offset));
+        .skip(Number(offset));
 
       res.json({
         success: true,

@@ -1,8 +1,7 @@
 import axios from "axios";
-import db from "../config/db";
-import { brandProfiles, campaignPlans } from "../model/schema";
-import { eq } from "drizzle-orm";
+import { BrandProfile, CampaignPlan } from "../models";
 import { envConfigs } from "../config/envConfig";
+import { toObjectId } from '../utils/mongoHelpers';
 
 const API_BASE_URL = `${envConfigs.aiBackendUrl}/v1/campaigns`;
 
@@ -26,45 +25,41 @@ export class CampaignPlanService {
   }
 static async createCampaignPlan(userId: number, payload: any) {
   try {
-    const checkBrandProfile = await db
-      .select()
-      .from(brandProfiles)
-      .where(eq(brandProfiles.profileId, payload.brand_profile_id));
+    const brandProfileRecord = await BrandProfile.findOne({
+      profileId: payload.brand_profile_id
+    });
 
-    if (checkBrandProfile.length === 0) {
+    if (!brandProfileRecord) {
       return { message: "Brand profile not found" };
     }
-    const brandProfileRecord = checkBrandProfile[0];
-    const existingPlan = await db
-      .select()
-      .from(campaignPlans)
-      .where(eq(campaignPlans.brandProfileId, brandProfileRecord.id));
 
-    if (existingPlan.length > 0) {
+    const existingPlan = await CampaignPlan.findOne({
+      brandProfileId: brandProfileRecord._id
+    });
+
+    if (existingPlan) {
       return {
         message: "Campaign plan already exists for this brand profile",
-        existingPlan: existingPlan[0],
+        existingPlan: existingPlan,
       };
     }
 
     const response = await axios.post(`${API_BASE_URL}`, payload);
     const campaignData = response.data;
 
-    const [newPlan] = await db
-      .insert(campaignPlans)
-      .values({
-        userId,
-        brandProfileId: brandProfileRecord.id,
-        campaignId: campaignData._id,
-        data: campaignData,
-      })
-      .returning();
+    const newPlan = await CampaignPlan.create({
+      userId: toObjectId(userId),
+      brandProfileId: brandProfileRecord._id,
+      campaignId: campaignData._id,
+      data: campaignData,
+    });
 
-    newPlan.brandProfileId = payload.brand_profile_id;
+    const result = newPlan.toObject();
+    (result as any).brandProfileId = payload.brand_profile_id;
 
     return {
       message: "New campaign plan created successfully",
-      data: newPlan,
+      data: result,
     };
 
   } catch (error: any) {
@@ -129,9 +124,11 @@ static async finalizeCampaignPlan(
     // console.log("Finalized Plan Response:", finalizedPlan);
     if(finalizedPlan.plan_status ){
       //update plan_status in campaignPlans table
-      await db.update(campaignPlans)
-        .set({ data: { ...finalizedPlan, plan_status: finalizedPlan.plan_status } })
-        .where(eq(campaignPlans.campaignId, campaignPlanId));   
+      await CampaignPlan.findOneAndUpdate(
+        { campaignId: campaignPlanId },
+        { data: { ...finalizedPlan, plan_status: finalizedPlan.plan_status } },
+        { new: true }
+      );
     }
 
     return finalizedPlan;

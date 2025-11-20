@@ -1,10 +1,8 @@
 import { Request, Response } from 'express';
 import { photographyClient } from '../services/apiClient';
 import { handleApiError, ImageGenerationError, withErrorHandling } from '../utils/errorHandler';
-import { eq } from 'drizzle-orm';
 import { JobService } from '../services/jobServices';
-import { photographyGenerations } from '../model/schema';
-import db from '../config/db';
+import { PhotographyGeneration } from '../models';
 import { MulterFiles } from '../utils/multer';
 import FormData from 'form-data';
 import { json } from 'zod';
@@ -109,9 +107,7 @@ export class PhotographyController {
         }
 
         if (job.status === 'completed' || job.status === 'failed') {
-          const [photography] = await db.select()
-            .from(photographyGenerations)
-            .where(eq(photographyGenerations.jobId, jobId));
+          const photography = await PhotographyGeneration.findOne({ jobId: jobId });
 
           return {
             job_id: jobId,
@@ -132,11 +128,13 @@ export class PhotographyController {
           });
 
           if (status.status === 'completed' && status.result) {
-            await db.update(photographyGenerations)
-              .set({
+            await PhotographyGeneration.findOneAndUpdate(
+              { jobId: jobId },
+              {
                 transformedImageUrl: status.result.image_url
-              })
-              .where(eq(photographyGenerations.jobId, jobId));
+              },
+              { new: true }
+            );
           }
         }
         return status;

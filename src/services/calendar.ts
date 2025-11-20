@@ -1,7 +1,6 @@
 import axios from "axios";
-import { campaignPlans, contentCalander, brandProfiles } from "../model/schema";
-import db from "../config/db";
-import { eq, sql } from "drizzle-orm";
+import { CampaignPlan, ContentCalendar, BrandProfile } from "../models";
+import { Types } from "mongoose";
 import { envConfigs } from "../config/envConfig";
 
 
@@ -11,29 +10,27 @@ export default class CalendarService {
 
   static createCalendar = async (payload: any) => {
     try {
-      const checkStatus = await db.select().from(campaignPlans).where(eq(campaignPlans.campaignId, payload.campaignId));
-      const plan_status = checkStatus[0]?.data?.plan_status;
+      const checkStatus = await CampaignPlan.findOne({ campaignId: payload.campaignId }).lean();
+      const plan_status = checkStatus?.data?.plan_status;
       if (plan_status === "finalized") {
         // NEW: Enhance payload with brand analysis if brand_profile_id is available
         const brandProfileId = payload.brand_profile_id;
         if (brandProfileId) {
           try {
             // Get campaign plan to find brand profile
-            const campaignPlan = await db.select()
-              .from(campaignPlans)
-              .where(eq(campaignPlans.campaignId, payload.campaignId))
-              .limit(1);
-            
-            if (campaignPlan.length > 0 && campaignPlan[0].brandProfileId) {
+            const campaignPlan = await CampaignPlan.findOne({
+              campaignId: payload.campaignId
+            }).lean();
+
+            if (campaignPlan && campaignPlan.brandProfileId) {
               // Get brand profile with analysis context
-              const brandProfile = await db.select()
-                .from(brandProfiles)
-                .where(eq(brandProfiles.id, campaignPlan[0].brandProfileId))
-                .limit(1);
-              
-              if (brandProfile.length > 0) {
-                const analysisContext = brandProfile[0].analysis_context as any;
-                const brandKit = brandProfile[0].brandKit as any;
+              const brandProfile = await BrandProfile.findById(
+                campaignPlan.brandProfileId
+              ).lean();
+
+              if (brandProfile) {
+                const analysisContext = brandProfile.analysis_context as any;
+                const brandKit = brandProfile.brandKit as any;
                 
                 if (analysisContext) {
                   // Enhance payload with brand insights for persona-aware content generation
@@ -63,13 +60,13 @@ export default class CalendarService {
         
         const response = await axios.post(`${envConfigs.aiBackendUrl}/v1/campaigns/${payload.campaignId}/generate-calendar`, payload);
         if (response.status === 202) {
-          const checkCampaignPlan = await db.select().from(campaignPlans).where(eq(campaignPlans.campaignId, payload.campaignId));
-          if (checkCampaignPlan.length > 0) {
-            const [newCalendar] = await db.insert(contentCalander).values({
-              userId: checkCampaignPlan[0].userId,
-              campaignPlanId: checkCampaignPlan[0].id,
+          const checkCampaignPlan = await CampaignPlan.findOne({ campaignId: payload.campaignId }).lean();
+          if (checkCampaignPlan) {
+            const newCalendar = await ContentCalendar.create({
+              userId: checkCampaignPlan.userId,
+              campaignPlanId: checkCampaignPlan._id,
               data: response.data,
-            }).returning();
+            });
             return { campaignId: payload.campaignId, contentCalendar: response.data };
           }
         } else {
@@ -89,10 +86,11 @@ export default class CalendarService {
     try {
       const response = await axios.get(`${envConfigs.aiBackendUrl}/v1/calendars/jobs/${job_id}`);
       if (response.data.status === "complete") {
-        await db
-          .update(contentCalander)
-          .set({ data: response.data })
-          .where(sql`${contentCalander.data} ->> 'job_id' = ${job_id}`);
+        await ContentCalendar.findOneAndUpdate(
+          { 'data.job_id': job_id },
+          { data: response.data },
+          { new: true }
+        );
       }
       return response.data;
     } catch (error: any) {

@@ -38,7 +38,7 @@ export interface UICriticalGap {
 // ============================================================================
 
 export interface BrandProfileListItem {
-  id: number;               // brand_profile.id
+  id: string | number;      // brand_profile.id (MongoDB: string, PostgreSQL: number)
   domain: string;
   brandName: string | null;
   logo: string | null;      // primary logo URL
@@ -50,7 +50,7 @@ export interface BrandProfileListItem {
 // ============================================================================
 
 export interface BrandIntelligenceView {
-  id: number;               // brand_profile.id
+  id: string | number;      // brand_profile.id (MongoDB: string, PostgreSQL: number)
   domain: string;
   brandName: string | null;
 
@@ -94,6 +94,9 @@ export interface BrandIntelligenceView {
 export interface BrandIntelligenceDetailView extends BrandIntelligenceView {
   // Unwrapped brand kit with values extracted from FieldValue wrappers
   brandKitUnwrapped: any;        // Clean data with metadata for each field
+
+  // Python v2 profile data
+  profileData?: any;             // Raw profile data from brand_profiles collection
 
   // Data quality information
   dataQuality: {

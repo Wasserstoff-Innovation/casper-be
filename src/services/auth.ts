@@ -1,6 +1,5 @@
-import db from "../config/db";
-import { brandKits, brandProfiles, campaignPlans, contentCalander, users } from "../model/schema";
-import { eq } from "drizzle-orm";
+import { User, BrandProfile, BrandKit, CampaignPlan, ContentCalendar } from "../models";
+import { toObjectId } from '../utils/mongoHelpers';
 
 interface UserPayload {
   email: string;
@@ -12,54 +11,53 @@ interface UserPayload {
 export default class AuthService {
   static async authHandler(payload: UserPayload) {
     const { email, name, avatar_url, provider } = payload;
-    const existingUser = await db.query.users.findFirst({
-      where: eq(users.email, email),
-    });
+    const existingUser = await User.findOne({ email: email });
 
     if (existingUser) {
       return { user: existingUser, newSignUp: false };
     }
-    const [newUser] = await db
-      .insert(users)
-      .values({
-        email,
-        name,
-        avatar_url,
-        provider,
-      })
-      .returning();
+
+    const newUser = await User.create({
+      email,
+      name,
+      avatar_url,
+      provider,
+    });
 
     return { user: newUser, newSignUp: true };
   }
 
   static getUser = async (userId: number) => {
     try {
-      const result: any = await db.query.brandProfiles.findMany({
-        where: (fields: any, operators: any) => operators.eq(fields.userId, userId),
-        columns: {
-          profileId: true,
-        },
-        with: {
-          brandKits: {
-            columns: {
-              kitData: true,
-            },
-          },
-        },
-      });
+      // Get brand profiles for the user
+      const profiles = await BrandProfile.find({
+        userId: toObjectId(userId)
+      })
+        .select('profileId _id')
+        .lean();
 
-      if (!result || result.length === 0) {
+      if (!profiles || profiles.length === 0) {
         console.log("No brand profile found for user:", userId);
         return [];
       }
-      console.log(" result................................", result[0]?.brandKits?.kitData);
-      const formatted = result.map((profile: any) => {
-        const brandKits = profile.brandKits;
-        return {
-          brandProfileId: profile.profileId,
-          kitData: brandKits?.kitData ?? {},
-        };
-      });
+
+      // Get brand kits for each profile
+      const formatted = await Promise.all(
+        profiles.map(async (profile: any) => {
+          const brandKit = await BrandKit.findOne({
+            brandProfileId: profile._id
+          })
+            .select('kitData')
+            .lean();
+
+          console.log("Brand kit for profile:", profile.profileId, brandKit?.kitData);
+
+          return {
+            brandProfileId: profile.profileId,
+            kitData: brandKit?.kitData ?? {},
+          };
+        })
+      );
 
       console.log("Formatted result................................", formatted);
       return formatted;
@@ -71,51 +69,46 @@ export default class AuthService {
   };
 
 
-  static getCalendarData = async (userId: number, profileId: any) => {
+  static getCalendarData = async (_userId: number, profileId: any) => {
     try {
-      const result = await db.query.brandProfiles.findMany({
-        where: (fields: any, operators: any) => operators.eq(fields.profileId, profileId),
-        columns: { profileId: true },
-        with: {
-          campaignPlans: {
-            columns: { campaignId: true },
-            with: {
-              contentCalander: { columns: { data: true } },
-            },
-          },
-        },
-      });
+      const profile = await BrandProfile.findOne({ profileId: profileId })
+        .select('profileId _id')
+        .lean();
 
-      // console.log("Raw result:", result);
+      if (!profile) return [];
 
-      if (!result || result.length === 0) return [];
+      // Get campaign plans for this profile
+      const campaignPlans = await CampaignPlan.find({
+        brandProfileId: profile._id
+      }).lean();
 
-      const formatted = result.map((profile: any) => {
-        const campaignPlansArray = Array.isArray(profile.campaignPlans)
-          ? profile.campaignPlans
-          : profile.campaignPlans
-            ? [profile.campaignPlans]
-            : [];
-
-        return {
+      if (!campaignPlans || campaignPlans.length === 0) {
+        return [{
           brandProfileId: profile.profileId,
-          campaignPlans: campaignPlansArray.map((campaignPlan: any) => {
-            const contentCalanderArray = Array.isArray(campaignPlan.contentCalander)
-              ? campaignPlan.contentCalander
-              : campaignPlan.contentCalander
-                ? [campaignPlan.contentCalander]
-                : [];
+          campaignPlans: []
+        }];
+      }
 
-            return {
-              campaignId: campaignPlan.campaignId,
-              contentCalander: contentCalanderArray.map((cc: any) => cc.data ?? {}),
-            };
-          }),
-        };
-      });
+      // Get content calendars for each campaign plan
+      const plansWithCalendars = await Promise.all(
+        campaignPlans.map(async (plan: any) => {
+          const calendar = await ContentCalendar.findOne({
+            campaignPlanId: plan._id
+          }).lean();
 
-      console.log("Formatted calendar data:", formatted);
-      return formatted;
+          return {
+            campaignId: plan.campaignId,
+            data: plan.data,
+            calendar: calendar?.data || null,
+            created_at: plan.created_at
+          };
+        })
+      );
+
+      return [{
+        brandProfileId: profile.profileId,
+        campaignPlans: plansWithCalendars
+      }];
 
     } catch (error: any) {
       console.error("Error fetching calendar data:", error);

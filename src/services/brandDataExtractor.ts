@@ -207,7 +207,7 @@ export class BrandDataExtractor {
   // Roadmap Normalization (NEW)
   // ============================================================================
 
-  static extractRoadmapData(roadmap: BrandRoadmap | null, profileId: number) {
+  static extractRoadmapData(roadmap: BrandRoadmap | null, profileId: string | number) {
     if (!roadmap) {
       return { campaigns: [], milestones: [], tasks: [] };
     }
@@ -289,7 +289,7 @@ export class BrandDataExtractor {
 
   private static normalizeRoadmapTask(
     task: any,
-    profileId: number,
+    profileId: string | number,
     campaignId: string | null,
     milestoneId: string | null,
     isQuickWin: boolean

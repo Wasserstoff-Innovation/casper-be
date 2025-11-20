@@ -85,20 +85,11 @@ static getJobStatus = async (req: Request, res: Response) => {
     const { profile_id } = req.params;
     if (!profile_id) return res.status(400).json({ message: 'profile_id required' });
 
-    // OPTIMIZED: Use summary view instead of raw database dump
+    // Use optimized summary view
     // This reduces payload from 400KB to 10-50KB
-    const profileId = parseInt(profile_id, 10);
-    if (!isNaN(profileId)) {
-      // If it's a numeric ID, use the new optimized summary view
-      console.log("Using optimized summary view for profile:", profileId);
-      const summaryView = await BrandIntelligenceService.getSummaryView(profileId);
-      return res.status(200).json(summaryView);
-    }
-
-    // Fallback for legacy string-based profile IDs (job_id format)
-    console.log("Using legacy profile lookup for:", profile_id);
-    const result = await BrandProfileService.getBrandProfile(profile_id);
-    res.status(200).json(result);
+    console.log("Using optimized summary view for profile:", profile_id);
+    const summaryView = await BrandIntelligenceService.getSummaryView(profile_id);
+    return res.status(200).json(summaryView);
   } catch (err: any) {
     res.status(500).json({ message: err.message });
   }
@@ -154,8 +145,8 @@ static getSummaryView = async (req: Request, res: Response) => {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    const profileId = parseInt(req.params.id, 10);
-    if (isNaN(profileId)) {
+    const profileId = req.params.id;
+    if (!profileId) {
       return res.status(400).json({ error: "Invalid profile ID" });
     }
 
@@ -177,8 +168,8 @@ static getDetailView = async (req: Request, res: Response) => {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    const profileId = parseInt(req.params.id, 10);
-    if (isNaN(profileId)) {
+    const profileId = req.params.id;
+    if (!profileId) {
       return res.status(400).json({ error: "Invalid profile ID" });
     }
 
@@ -344,8 +335,8 @@ static analyzeModule = async (req: Request, res: Response) => {
       return res.status(400).json({ error: "module is required" });
     }
 
-    const profileId = parseInt(id, 10);
-    if (isNaN(profileId)) {
+    const profileId = id;
+    if (!profileId) {
       return res.status(400).json({ error: "Invalid profile id" });
     }
 

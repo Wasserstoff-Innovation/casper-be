@@ -1,10 +1,8 @@
 import { Request, Response } from 'express';
 import { playgroundClient } from '../services/apiClient';
 import { handleApiError, ImageGenerationError, withErrorHandling } from '../utils/errorHandler';
-import { eq, and } from 'drizzle-orm';
 import { JobService } from '../services/jobServices';
-import { playgroundJobs, playgroundSessions } from '../model/schema';
-import db from '../config/db';
+import { PlaygroundJob, PlaygroundSession } from '../models';
 import { MulterFiles } from '../utils/multer';
 import FormData from 'form-data';
 
@@ -195,12 +193,10 @@ export class PlaygroundController {
       const user: any = req.user;
       const userId = user.userId;
 
-      const [session] = await db.select()
-        .from(playgroundSessions)
-        .where(and(
-          eq(playgroundSessions.sessionId, sessionId),
-          eq(playgroundSessions.userId, userId)
-        ));
+      const session = await PlaygroundSession.findOne({
+        sessionId: sessionId,
+        userId: userId
+      });
 
       if (!session) {
         throw new ImageGenerationError('Playground session not found', 404, null, 'playground');
@@ -228,9 +224,7 @@ export class PlaygroundController {
         }
 
         if (job.status === 'completed' || job.status === 'failed') {
-          const [playgroundJob] = await db.select()
-            .from(playgroundJobs)
-            .where(eq(playgroundJobs.jobId, jobId));
+          const playgroundJob = await PlaygroundJob.findOne({ jobId: jobId });
 
           return {
             job_id: jobId,
@@ -252,25 +246,25 @@ export class PlaygroundController {
 
           // Update session if this is an editing job and it completed
           if (status.status === 'completed' && status.result?.image_url) {
-            const [playgroundJob] = await db.select()
-              .from(playgroundJobs)
-              .where(eq(playgroundJobs.jobId, jobId));
+            const playgroundJob = await PlaygroundJob.findOne({ jobId: jobId });
 
             if (playgroundJob?.sessionId && playgroundJob.type === 'editing') {
-              const [session] = await db.select()
-                .from(playgroundSessions)
-                .where(eq(playgroundSessions.sessionId, playgroundJob.sessionId));
+              const session = await PlaygroundSession.findOne({
+                sessionId: playgroundJob.sessionId
+              });
 
               if (session) {
                 const updatedHistory = [...(session.historyUrls || []), status.result.image_url];
 
-                await db.update(playgroundSessions)
-                  .set({
+                await PlaygroundSession.findOneAndUpdate(
+                  { sessionId: playgroundJob.sessionId },
+                  {
                     currentImageUrl: status.result.image_url,
                     historyUrls: updatedHistory,
                     updatedAt: new Date()
-                  })
-                  .where(eq(playgroundSessions.sessionId, playgroundJob.sessionId));
+                  },
+                  { new: true }
+                );
               }
             }
           }

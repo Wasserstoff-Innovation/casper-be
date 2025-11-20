@@ -1,10 +1,8 @@
 import { Request, Response } from 'express';
 import { printAdClient } from '../services/apiClient';
 import { handleApiError, ImageGenerationError, withErrorHandling } from '../utils/errorHandler';
-import { eq } from 'drizzle-orm';
 import { JobService } from '../services/jobServices';
-import db from '../config/db';
-import { printAdGenerations } from '../model/schema';
+import { PrintAdGeneration } from '../models';
 import { MulterFiles } from '../utils/multer';
 import FormData from 'form-data';
 import { BrandIdentifier } from '../services/brandIdentifier';
@@ -130,9 +128,7 @@ export class PrintAdController {
         }
 
         if (job.status === 'completed' || job.status === 'failed') {
-          const [printAd] = await db.select()
-            .from(printAdGenerations)
-            .where(eq(printAdGenerations.jobId, jobId));
+          const printAd = await PrintAdGeneration.findOne({ jobId: jobId });
 
           return {
             job_id: jobId,
@@ -151,14 +147,16 @@ export class PrintAdController {
           });
 
           if (status.status === 'completed' && status.result) {
-            await db.update(printAdGenerations)
-              .set({
+            await PrintAdGeneration.findOneAndUpdate(
+              { jobId: jobId },
+              {
                 aiOptimizedImageUrl: status.result.ai_optimized_image_url,
                 userInstructedImageUrl: status.result.user_instructed_image_url,
                 aiOptimizedPrompt: status.result.ai_optimized_prompt,
                 userInstructedPrompt: status.result.user_instructed_prompt
-              })
-              .where(eq(printAdGenerations.jobId, jobId));
+              },
+              { new: true }
+            );
           }
         }
 

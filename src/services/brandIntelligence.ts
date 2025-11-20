@@ -4,9 +4,9 @@
  * Builds view models for frontend consumption from database data
  */
 
-import db from '../config/db';
-import { brandProfiles, brandRoadmapCampaigns, brandRoadmapTasks } from '../model/schema';
-import { eq, and, count } from 'drizzle-orm';
+import { BrandProfile, BrandRoadmapCampaign, BrandRoadmapTask, BrandKit } from '../models';
+import { Types } from 'mongoose';
+import { toObjectId } from '../utils/mongoHelpers';
 import {
   BrandIntelligenceView,
   BrandIntelligenceDetailView,
@@ -30,97 +30,122 @@ export class BrandIntelligenceService {
   /**
    * Get summary view for brand intelligence (lightweight for drawer/list)
    */
-  static async getSummaryView(profileId: number): Promise<BrandIntelligenceView> {
-    // Fetch brand profile
-    const profiles = await db.select()
-      .from(brandProfiles)
-      .where(eq(brandProfiles.id, profileId))
-      .limit(1);
+  static async getSummaryView(profileId: string): Promise<BrandIntelligenceView> {
+    // Fetch brand profile by _id
+    const profile = await BrandProfile.findById(profileId);
 
-    if (profiles.length === 0) {
+    if (!profile) {
       throw new Error(`Brand profile not found: ${profileId}`);
     }
 
-    const profile = profiles[0];
+    // Fetch brand kit from separate collection
+    const brandKitDoc = await BrandKit.findOne({ profileId: profileId });
 
-    if (profile.status !== 'complete') {
-      throw new Error(`Brand profile is not complete. Status: ${profile.status}`);
-    }
+    console.log('Profile data:', {
+      name: profile.name,
+      domain: profile.domain,
+      persona: profile.persona,
+      hasScores: !!profile.scores,
+      scores: profile.scores
+    });
 
-    const comprehensive = profile.brandKit;
-    const scores = profile.brandScores;
-    const roadmap = profile.brandRoadmap;
-    const context = profile.analysis_context;
+    console.log('Brand kit doc:', {
+      found: !!brandKitDoc,
+      brand_name: brandKitDoc?.brand_name,
+      hasVisualIdentity: !!brandKitDoc?.visual_identity,
+      hasVerbalIdentity: !!brandKitDoc?.verbal_identity
+    });
 
-    // Build view model
+    // Build view model from Python v2 structure
     return {
-      id: profile.id,
-      domain: profile.canonical_domain || 'unknown',
-      brandName: profile.brand_name,
+      id: profile._id.toString(),
+      domain: profile.domain || 'unknown',
+      brandName: profile.name || brandKitDoc?.brand_name || null,
 
       analysisContext: {
-        personaId: profile.persona_id,
-        personaLabel: context?.persona_label || null,
-        entityType: profile.entity_type,
-        businessModel: profile.business_model,
-        channelOrientation: profile.channel_orientation,
-        completenessScore: profile.completeness_score || 0,
-        generatedAt: comprehensive?.meta?.audit_timestamp?.value || profile.created_at?.toISOString() || '',
+        personaId: profile.persona || null,
+        personaLabel: null,
+        entityType: profile.type || null,
+        businessModel: profile.business_model || null,
+        channelOrientation: null,
+        completenessScore: 0,
+        generatedAt: brandKitDoc?.generated_at?.toISOString() || profile.created_at?.toISOString() || '',
       },
 
-      snapshot: this.buildSnapshot(comprehensive, scores, profile),
-      scores: this.buildScoresView(scores),
-      channels: this.buildChannelsView(comprehensive),
-      brandKitSummary: this.buildBrandKitSummary(comprehensive),
-      criticalGaps: this.buildCriticalGaps(comprehensive),
-      roadmapSummary: await this.buildRoadmapSummary(profileId, roadmap),
+      snapshot: this.buildSnapshotV2(profile, brandKitDoc),
+      scores: this.buildScoresViewV2(profile.scores),
+      channels: this.buildChannelsViewV2(brandKitDoc),
+      brandKitSummary: this.buildBrandKitSummaryV2(brandKitDoc, profile),
+      criticalGaps: [],
+      roadmapSummary: this.buildRoadmapSummaryV2(profile.roadmap),
     };
   }
 
   /**
    * Get detail view (full data for deep dive)
    */
-  static async getDetailView(profileId: number): Promise<BrandIntelligenceDetailView> {
+  static async getDetailView(profileId: string): Promise<BrandIntelligenceDetailView> {
     const summaryView = await this.getSummaryView(profileId);
 
-    const profiles = await db.select()
-      .from(brandProfiles)
-      .where(eq(brandProfiles.id, profileId))
-      .limit(1);
+    const profile = await BrandProfile.findById(profileId);
 
-    const profile = profiles[0];
-    const comprehensive = profile.brandKit;
-
-    // Unwrap FieldValues and extract clean data with metadata
-    let brandKitUnwrapped: any = null;
-    let dataQuality: any = {
-      totalFields: 0,
-      foundFields: 0,
-      inferredFields: 0,
-      missingFields: 0,
-      averageConfidence: 0,
-      sourceBreakdown: {},
-      lowConfidenceFields: [],
-    };
-
-    try {
-      if (comprehensive) {
-        brandKitUnwrapped = FieldValueUnwrapper.unwrapBrandKit(comprehensive);
-        dataQuality = FieldValueUnwrapper.extractDataQualitySummary(comprehensive);
-      }
-    } catch (error: any) {
-      console.warn('⚠️ Could not unwrap brand kit:', error.message);
-      // Fallback: return comprehensive data as-is
-      brandKitUnwrapped = comprehensive;
+    if (!profile) {
+      throw new Error(`Brand profile not found: ${profileId}`);
     }
+
+    // Fetch brand kit from separate collection
+    const brandKitDoc = await BrandKit.findOne({ profileId: profileId });
+
+    // Python v2 structure - return raw data
+    const brandKitData = brandKitDoc ? {
+      visual_identity: brandKitDoc.visual_identity,
+      verbal_identity: brandKitDoc.verbal_identity,
+      proof_trust: brandKitDoc.proof_trust,
+      seo: brandKitDoc.seo,
+      content: brandKitDoc.content,
+      conversion: brandKitDoc.conversion,
+      product: brandKitDoc.product
+    } : null;
+
+    const profileData = {
+      name: profile.name,
+      domain: profile.domain,
+      url: profile.url,
+      type: profile.type,
+      business_model: profile.business_model,
+      persona: profile.persona,
+      logo_url: profile.logo_url,
+      favicon_url: profile.favicon_url,
+      primary_colors: profile.primary_colors,
+      heading_font: profile.heading_font,
+      body_font: profile.body_font,
+      elevator_pitch_one_liner: profile.elevator_pitch_one_liner,
+      value_proposition: profile.value_proposition,
+      brand_story: profile.brand_story,
+      tone_voice: profile.tone_voice,
+      target_customer_profile: profile.target_customer_profile,
+      the_problem_it_solves: profile.the_problem_it_solves,
+      the_transformation_outcome: profile.the_transformation_outcome,
+      scores: profile.scores,
+      roadmap: profile.roadmap
+    };
 
     return {
       ...summaryView,
-      brandKitUnwrapped,
-      dataQuality,
-      brandKitRaw: comprehensive,
-      roadmapFull: profile.brandRoadmap,
-      analysisContextFull: profile.analysis_context,
+      brandKitUnwrapped: brandKitData,
+      profileData: profileData,
+      dataQuality: {
+        totalFields: 0,
+        foundFields: 0,
+        inferredFields: 0,
+        missingFields: 0,
+        averageConfidence: 0,
+        sourceBreakdown: {},
+        lowConfidenceFields: []
+      },
+      brandKitRaw: brandKitData,
+      roadmapFull: null,
+      analysisContextFull: null,
     };
   }
 
@@ -472,20 +497,17 @@ export class BrandIntelligenceService {
   }
 
   private static async buildRoadmapSummary(
-    profileId: number,
+    profileId: Types.ObjectId,
     roadmap: any
   ): Promise<RoadmapSummaryView> {
     // Get quick win tasks from database
-    const quickWinTasks = await db.select()
-      .from(brandRoadmapTasks)
-      .where(and(
-        eq(brandRoadmapTasks.brandProfileId, profileId),
-        eq(brandRoadmapTasks.isQuickWin, 1)
-      ))
-      .limit(10);
+    const quickWinTasks = await BrandRoadmapTask.find({
+      brandProfileId: profileId,
+      isQuickWin: 1
+    }).limit(10);
 
     const quickWins: RoadmapTaskSummary[] = quickWinTasks.map((task: any) => ({
-      id: task.id,
+      id: task._id,
       title: task.title || '',
       description: task.description || '',
       category: task.category || 'other',
@@ -496,37 +518,28 @@ export class BrandIntelligenceService {
     }));
 
     // Get campaigns with task counts
-    const campaigns = await db.select()
-      .from(brandRoadmapCampaigns)
-      .where(eq(brandRoadmapCampaigns.brandProfileId, profileId));
+    const campaigns = await BrandRoadmapCampaign.find({ brandProfileId: profileId });
 
     const campaignSummaries: RoadmapCampaignSummary[] = await Promise.all(
       campaigns.map(async (campaign: any) => {
         // Count total and completed tasks
-        const totalTasks = await db.select({ count: count() })
-          .from(brandRoadmapTasks)
-          .where(eq(brandRoadmapTasks.campaignId, campaign.id));
+        const totalTasks = await BrandRoadmapTask.countDocuments({ campaignId: campaign._id });
+        const completedTasks = await BrandRoadmapTask.countDocuments({
+          campaignId: campaign._id,
+          status: 'completed'
+        });
 
-        const completedTasks = await db.select({ count: count() })
-          .from(brandRoadmapTasks)
-          .where(and(
-            eq(brandRoadmapTasks.campaignId, campaign.id),
-            eq(brandRoadmapTasks.status, 'completed')
-          ));
-
-        const total = totalTasks[0]?.count || 0;
-        const completed = completedTasks[0]?.count || 0;
-        const completionPercentage = total > 0 ? Math.round((completed / total) * 100) : 0;
+        const completionPercentage = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
         return {
-          id: campaign.id,
+          id: campaign._id,
           title: campaign.title || '',
           shortTitle: campaign.shortTitle || '',
           category: campaign.category || '',
           estimatedTimeline: campaign.estimatedTimeline || '',
           completionPercentage,
-          totalTasks: total,
-          completedTasks: completed,
+          totalTasks,
+          completedTasks,
         };
       })
     );
@@ -550,7 +563,7 @@ export class BrandIntelligenceService {
    * Returns lightweight list items for efficient list rendering
    */
   static async listProfiles(
-    userId: number,
+    userId: string | number,
     filters: {
       persona?: string;
       minScore?: number;
@@ -562,64 +575,68 @@ export class BrandIntelligenceService {
     limit: number = 20,
     offset: number = 0
   ): Promise<{ profiles: BrandProfileListItem[]; total: number }> {
-    const { gte, desc: descOrder, asc: ascOrder } = await import('drizzle-orm');
-
-    // Build WHERE conditions
-    const conditions: any[] = [eq(brandProfiles.userId, userId)];
+    // Build query filter
+    // userId is stored as string in MongoDB (from Python backend), not ObjectId
+    // brand_profiles collection only contains completed profiles (no status field needed)
+    const query: any = {
+      userId: userId.toString()
+    };
 
     if (filters.persona) {
-      conditions.push(eq(brandProfiles.persona_id, filters.persona));
+      query.persona_id = filters.persona;
     }
 
     if (filters.minScore !== undefined) {
-      conditions.push(gte(brandProfiles.overall_score, filters.minScore));
+      query.overall_score = { $gte: filters.minScore };
     }
 
     if (filters.entityType) {
-      conditions.push(eq(brandProfiles.entity_type, filters.entityType));
+      query.entity_type = filters.entityType;
     }
 
-    if (filters.status) {
-      conditions.push(eq(brandProfiles.status, filters.status));
-    }
-
-    // Build ORDER BY
-    const orderColumn = sort === 'overall_score' ? brandProfiles.overall_score :
-                        sort === 'completeness_score' ? brandProfiles.completeness_score :
-                        sort === 'brand_name' ? brandProfiles.brand_name :
-                        brandProfiles.created_at;
-
-    const orderDirection = order === 'asc' ? ascOrder(orderColumn) : descOrder(orderColumn);
+    // Build sort
+    const sortObj: any = {};
+    const sortField = sort === 'overall_score' ? 'overall_score' :
+                      sort === 'completeness_score' ? 'completeness_score' :
+                      sort === 'brand_name' ? 'brand_name' :
+                      'created_at';
+    sortObj[sortField] = order === 'asc' ? 1 : -1;
 
     // Fetch profiles
-    const profiles = await db.select()
-      .from(brandProfiles)
-      .where(and(...conditions))
-      .orderBy(orderDirection)
-      .limit(limit)
-      .offset(offset);
+    const profiles = await BrandProfile.find(query)
+      .sort(sortObj)
+      .skip(offset)
+      .limit(limit);
 
     // Get total count
-    const totalResult = await db.select({ count: count() })
-      .from(brandProfiles)
-      .where(and(...conditions));
+    const total = await BrandProfile.countDocuments(query);
 
-    const total = totalResult[0]?.count || 0;
+    // Fetch brand kits for all profiles
+    const profileIds = profiles.map((p: any) => p._id.toString());
+    const brandKits = await BrandKit.find({ profileId: { $in: profileIds } })
+      .select('profileId kitData')
+      .lean();
+
+    // Create a map for quick lookup
+    const brandKitMap = new Map(
+      brandKits.map((kit: any) => [kit.profileId, kit.kitData])
+    );
 
     // Build lightweight list items (no heavy processing)
+    const getValue = getFieldValue;
     const listItems: BrandProfileListItem[] = profiles
-      .filter((p: any) => p.status === 'complete')
       .map((p: any) => {
+        // Get brand kit from separate collection
+        const kitData = brandKitMap.get(p._id.toString());
+
         // Extract logo from brand kit if available
-        const getValue = getFieldValue;
-        const brandKit = p.brandKit;
-        const logo = brandKit?.visual_identity?.logos?.primary_logo_url
-          ? getValue(brandKit.visual_identity.logos.primary_logo_url)
+        const logo = kitData?.external_presence?.visual_identity_v3?.logos?.primary_logo_url
+          ? getValue(kitData.external_presence.visual_identity_v3.logos.primary_logo_url)
           : null;
 
         return {
-          id: p.id,
-          domain: p.canonical_domain || 'unknown',
+          id: p._id.toString(),
+          domain: p.domain || 'unknown',
           brandName: p.brand_name,
           logo,
           personaId: p.persona_id,
@@ -628,7 +645,7 @@ export class BrandIntelligenceService {
 
     return {
       profiles: listItems,
-      total: typeof total === 'number' ? total : parseInt(total as string, 10),
+      total,
     };
   }
 
@@ -654,19 +671,18 @@ export class BrandIntelligenceService {
       updateData.acceptanceCriteria = updates.acceptanceCriteria;
     }
 
-    const updated = await db.update(brandRoadmapTasks)
-      .set(updateData)
-      .where(eq(brandRoadmapTasks.id, taskId))
-      .returning();
+    const task = await BrandRoadmapTask.findByIdAndUpdate(
+      taskId,
+      updateData,
+      { new: true }
+    );
 
-    if (updated.length === 0) {
+    if (!task) {
       throw new Error(`Task not found: ${taskId}`);
     }
 
-    const task = updated[0];
-
     return {
-      id: task.id,
+      id: task._id,
       title: task.title || '',
       description: task.description || '',
       category: task.category || 'other',
@@ -687,8 +703,6 @@ export class BrandIntelligenceService {
       acceptanceCriteria?: string;
     }
   ): Promise<{ updated: number; tasks: RoadmapTaskSummary[] }> {
-    const { inArray } = await import('drizzle-orm');
-
     const updateData: any = {
       updatedAt: new Date(),
     };
@@ -701,13 +715,16 @@ export class BrandIntelligenceService {
       updateData.acceptanceCriteria = updates.acceptanceCriteria;
     }
 
-    const updated = await db.update(brandRoadmapTasks)
-      .set(updateData)
-      .where(inArray(brandRoadmapTasks.id, taskIds))
-      .returning();
+    await BrandRoadmapTask.updateMany(
+      { _id: { $in: taskIds } },
+      updateData
+    );
 
-    const tasks = updated.map((task: any) => ({
-      id: task.id,
+    // Fetch updated tasks
+    const tasks = await BrandRoadmapTask.find({ _id: { $in: taskIds } });
+
+    const taskSummaries = tasks.map((task: any) => ({
+      id: task._id,
       title: task.title || '',
       description: task.description || '',
       category: task.category || 'other',
@@ -718,8 +735,167 @@ export class BrandIntelligenceService {
     }));
 
     return {
-      updated: updated.length,
-      tasks,
+      updated: tasks.length,
+      tasks: taskSummaries,
+    };
+  }
+
+  /**
+   * V2 Helper methods for Python flat structure
+   */
+  private static buildScoresViewV2(scores: any): BrandScoresView {
+    if (!scores) {
+      return {
+        overall: null,
+        dimensions: {}
+      };
+    }
+
+    return {
+      overall: scores.overall || null,
+      dimensions: {
+        visual_clarity: scores.visual_clarity || null,
+        verbal_clarity: scores.verbal_clarity || null,
+        positioning: scores.positioning || null,
+        presence: scores.presence || null,
+        conversion_trust: scores.conversion_trust || null
+      }
+    };
+  }
+
+  private static buildSnapshotV2(profile: any, brandKit: any): any {
+    return {
+      strengths: [],
+      risks: [],
+      fieldsFound: 0,
+      fieldsInferred: 0,
+      fieldsMissing: 0,
+      totalCriticalGaps: 0,
+      sectionCompleteness: {},
+      evidenceSummary: {
+        sitePages: 0,
+        screenshots: 0,
+        searchResults: 0
+      }
+    };
+  }
+
+  private static buildChannelsViewV2(brandKit: any): ChannelsOverviewView {
+    const hasBlog = brandKit?.content?.has_blog || false;
+    const hasSocial = false; // TODO: check social profiles
+    const hasReviews = false; // TODO: check reviews
+
+    const channels = [
+      {
+        id: 'website',
+        label: 'Website',
+        present: true,
+        details: 'Domain'
+      },
+      {
+        id: 'blog',
+        label: 'Blog',
+        present: hasBlog,
+        ...(hasBlog && { details: brandKit?.content?.blog_url })
+      },
+      {
+        id: 'social',
+        label: 'Social Media',
+        present: hasSocial
+      },
+      {
+        id: 'review_sites',
+        label: 'Review Sites',
+        present: hasReviews
+      }
+    ];
+
+    const presentChannels = channels.filter(c => c.present).map(c => c.label);
+    const missingChannels = channels.filter(c => !c.present).map(c => c.label);
+
+    return {
+      channels: channels as ChannelStatus[],
+      summaryText: `Channels used: ${presentChannels.join(', ')}. Missing: ${missingChannels.join(', ')}.`
+    };
+  }
+
+  private static buildRoadmapSummaryV2(roadmap: any): RoadmapSummaryView {
+    if (!roadmap || !roadmap.tasks) {
+      return {
+        quickWins: [],
+        campaigns: [],
+        totalTasks: 0,
+        estimatedTimeline: ''
+      };
+    }
+
+    // Get quick wins (type === 'quick_win')
+    const quickWins = roadmap.tasks
+      .filter((t: any) => t.type === 'quick_win')
+      .slice(0, 5)
+      .map((t: any) => ({
+        id: t.task_id,
+        title: t.title,
+        description: t.description,
+        priority: t.priority_score,
+        status: t.status || 'pending',
+        category: t.category,
+        effort: t.effort,
+        impact: t.impact
+      }));
+
+    // Get projects
+    const projects = roadmap.tasks
+      .filter((t: any) => t.type === 'project')
+      .map((t: any) => ({
+        id: t.task_id,
+        title: t.title,
+        description: t.description,
+        priority: t.priority_score,
+        status: t.status || 'pending',
+        category: t.category,
+        effort: t.effort,
+        impact: t.impact
+      }));
+
+    return {
+      quickWins,
+      campaigns: projects,
+      totalTasks: roadmap.total_count || roadmap.tasks.length,
+      estimatedTimeline: `${roadmap.quick_wins_count || 0} quick wins, ${roadmap.projects_count || 0} projects`
+    };
+  }
+
+  private static buildBrandKitSummaryV2(brandKit: any, profile?: any): BrandKitSummaryView {
+    return {
+      meta: {
+        brandName: profile?.name || brandKit?.brand_name || null,
+        domain: profile?.domain || brandKit?.domain || null,
+        industry: null,
+        companyType: profile?.type || null
+      },
+      visualIdentity: {
+        primaryLogo: profile?.logo_url || brandKit?.visual_identity?.logo_url || null,
+        primaryColors: profile?.primary_colors || brandKit?.visual_identity?.colors?.primary || [],
+        headingFont: profile?.heading_font || brandKit?.visual_identity?.typography?.heading || null,
+        bodyFont: profile?.body_font || brandKit?.visual_identity?.typography?.body || null
+      },
+      verbalIdentity: {
+        tagline: brandKit?.verbal_identity?.tagline || null,
+        elevatorPitch: profile?.elevator_pitch_one_liner || brandKit?.verbal_identity?.elevator_pitch || null,
+        toneAdjectives: profile?.tone_voice || brandKit?.verbal_identity?.tone_voice || []
+      },
+      audiencePositioning: {
+        primaryICP: profile?.target_customer_profile?.role || null,
+        problemsSolved: profile?.the_problem_it_solves || [],
+        category: null
+      },
+      proof: {
+        testimonials: brandKit?.proof_trust?.testimonials_count || 0,
+        caseStudies: brandKit?.proof_trust?.case_studies_count || 0,
+        clientLogos: brandKit?.proof_trust?.client_logos_count || 0,
+        awards: brandKit?.proof_trust?.awards_count || 0
+      }
     };
   }
 }

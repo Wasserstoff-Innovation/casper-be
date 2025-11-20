@@ -2,9 +2,7 @@ import { Request, Response } from 'express';
 import { carouselClient } from '../services/apiClient';
 import { handleApiError, ImageGenerationError } from '../utils/errorHandler';
 import { JobService } from '../services/jobServices';
-import { carouselGenerations } from '../model/schema';
-import db from '../config/db';
-import { eq } from 'drizzle-orm';
+import { CarouselGeneration } from '../models';
 import { BrandIdentifier } from '../services/brandIdentifier';
 import { BrandDataExtractor } from '../services/brandDataExtractor';
 import { BrandAssetManager } from '../services/brandAssetManager';
@@ -140,8 +138,8 @@ export class CarouselController {
       });
 
       // ✅ Store generation record for tracking
-      await db.insert(carouselGenerations).values({
-        userId,
+      await CarouselGeneration.create({
+        userId: job.userId,
         jobId: job.jobId, // ✅ use local jobId, not external API job_id
         framePrompts: JSON.parse(req.body.frame_prompts),
         brandGuidelines: JSON.parse(req.body.brand_guidelines),
@@ -204,12 +202,14 @@ export class CarouselController {
 
         // Update carousel generation if completed
         if (status.status === 'completed' && status.result) {
-          await db.update(carouselGenerations)
-            .set({
+          await CarouselGeneration.findOneAndUpdate(
+            { jobId: jobId },
+            {
               enhancedPrompts: status.result.enhanced_prompts,
               imageUrls: status.result.image_urls
-            })
-            .where(eq(carouselGenerations.jobId, jobId));
+            },
+            { new: true }
+          );
         }
       }
 

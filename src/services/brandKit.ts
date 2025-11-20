@@ -1,79 +1,71 @@
 import FormData from "form-data";
 import axios from "axios";
-import { brandKits, brandProfiles } from "../model/schema";
-import db from "../config/db";
-import { eq } from "drizzle-orm";
+import { BrandKit, BrandProfile } from "../models";
 import { envConfigs } from "../config/envConfig";
+import { toObjectId } from '../utils/mongoHelpers';
 
-// const API_BASE_URL = "http://127.0.0.1:8000/api/v1/brand-kits";
 const API_BASE_URL = `${envConfigs.aiBackendUrl}/v1/brand-kits`;
 
 export default class BrandKitsService {
-  
+
   // NEW: Auto-generate brand kit from v2 brand intelligence data
   static async createBrandKitFromV2Profile(userId: number, brandProfileId: string) {
     try {
       console.log("Creating brand kit from v2 profile:", brandProfileId);
-      
-      // Get the brand profile with v2 data
-      const profile = await db.select()
-        .from(brandProfiles)
-        .where(eq(brandProfiles.profileId, brandProfileId))
-        .limit(1);
 
-      if (profile.length === 0) {
+      // Get the brand profile with v2 data
+      const profile = await BrandProfile.findOne({ profileId: brandProfileId });
+
+      if (!profile) {
         throw new Error('Brand profile not found');
       }
 
-      const brandProfile = profile[0];
-
       // Check if profile is complete
-      if (brandProfile.status !== 'complete' || !brandProfile.brandKit) {
+      if (profile.status !== 'complete' || !profile.brandKit) {
         throw new Error('Brand profile analysis is not complete yet');
       }
 
       // Transform v2 brand_kit data into brand kit format
       const kitData = {
-        brand_name: brandProfile.brandKit.brand_name,
-        domain: brandProfile.brandKit.domain,
-        visual_identity: brandProfile.brandKit.visual_identity,
-        voice_and_tone: brandProfile.brandKit.voice_and_tone,
-        positioning: brandProfile.brandKit.positioning,
-        audience: brandProfile.brandKit.audience,
-        seo_foundation: brandProfile.brandKit.seo_foundation,
-        content_strategy: brandProfile.brandKit.content_strategy,
-        trust_elements: brandProfile.brandKit.trust_elements,
-        conversion_analysis: brandProfile.brandKit.conversion_analysis,
-        brand_scores: brandProfile.brandScores,
-        brand_roadmap: brandProfile.brandRoadmap,
-        generated_at: brandProfile.brandKit.generated_at,
+        brand_name: profile.brandKit.brand_name,
+        domain: profile.brandKit.domain,
+        visual_identity: profile.brandKit.visual_identity,
+        voice_and_tone: profile.brandKit.voice_and_tone,
+        positioning: profile.brandKit.positioning,
+        audience: profile.brandKit.audience,
+        seo_foundation: profile.brandKit.seo_foundation,
+        content_strategy: profile.brandKit.content_strategy,
+        trust_elements: profile.brandKit.trust_elements,
+        conversion_analysis: profile.brandKit.conversion_analysis,
+        brand_scores: profile.brandScores,
+        brand_roadmap: profile.brandRoadmap,
+        generated_at: profile.brandKit.generated_at,
         source: 'v2_brand_intelligence'
       };
 
-      // Save to brand_kits table
-      const savedKit = await db
-        .insert(brandKits)
-        .values({
-          userId,
-          brandProfileId: brandProfile.id,
+      // Save to brand_kits table (upsert)
+      const savedKit = await BrandKit.findOneAndUpdate(
+        { brandProfileId: profile._id },
+        {
+          userId: toObjectId(userId),
+          brandProfileId: profile._id,
           kitData: kitData,
-          created_at: new Date(),
           updated_at: new Date(),
-        })
-        .onConflictDoUpdate({
-          target: brandKits.brandProfileId,
-          set: {
-            kitData: kitData,
-            updated_at: new Date(),
-          },
-        })
-        .returning();
+        },
+        {
+          upsert: true,
+          new: true,
+          setDefaultsOnInsert: true
+        }
+      );
 
-      savedKit[0].brandProfileId = brandProfileId;
       return {
         success: true,
         message: 'Brand kit created successfully from v2 profile',
-        brandKit: savedKit[0]
+        brandKit: {
+          ...savedKit.toObject(),
+          brandProfileId: brandProfileId
+        }
       };
 
     } catch (error: any) {
@@ -112,31 +104,28 @@ export default class BrandKitsService {
 
       console.log("response.data....", response.data);
 
-      const checkBrandProfile = await db
-        .select()
-        .from(brandProfiles)
-        .where(eq(brandProfiles.profileId, brandProfileId));
+      const checkBrandProfile = await BrandProfile.findOne({ profileId: brandProfileId });
 
-      if (checkBrandProfile.length > 0) {
-        const savedKit = await db
-          .insert(brandKits)
-          .values({
-            userId,
-            brandProfileId: checkBrandProfile[0].id,
+      if (checkBrandProfile) {
+        const savedKit = await BrandKit.findOneAndUpdate(
+          { brandProfileId: checkBrandProfile._id },
+          {
+            userId: toObjectId(userId),
+            brandProfileId: checkBrandProfile._id,
             kitData: response.data,
-            created_at: new Date(),
             updated_at: new Date(),
-          })
-          .onConflictDoUpdate({
-            target: brandKits.brandProfileId,
-            set: {
-              kitData: response.data,
-              updated_at: new Date(),
-            },
-          })
-          .returning();
-        savedKit[0].brandProfileId = brandProfileId;
-        return savedKit[0];
+          },
+          {
+            upsert: true,
+            new: true,
+            setDefaultsOnInsert: true
+          }
+        );
+
+        return {
+          ...savedKit.toObject(),
+          brandProfileId: brandProfileId
+        };
       } else {
         return { message: "brand profile not found" };
       }
@@ -151,7 +140,7 @@ export default class BrandKitsService {
   static async createManualBrandKit(userId: number, kitData: any) {
     try {
       console.log("Creating manual brand kit for user:", userId);
-      
+
       // Ensure format version and source are set
       const formattedKitData = {
         ...kitData,
@@ -161,21 +150,18 @@ export default class BrandKitsService {
       };
 
       // Save to brand_kits table (brandProfileId can be null for manual kits)
-      const savedKit = await db
-        .insert(brandKits)
-        .values({
-          userId,
-          brandProfileId: null, // Manual kits don't require a brand profile
-          kitData: formattedKitData,
-          created_at: new Date(),
-          updated_at: new Date(),
-        })
-        .returning();
+      const savedKit = await BrandKit.create({
+        userId: toObjectId(userId),
+        brandProfileId: null, // Manual kits don't require a brand profile
+        kitData: formattedKitData,
+        created_at: new Date(),
+        updated_at: new Date(),
+      });
 
       return {
         success: true,
         message: 'Manual brand kit created successfully',
-        brandKit: savedKit[0]
+        brandKit: savedKit
       };
 
     } catch (error: any) {
@@ -189,50 +175,36 @@ export default class BrandKitsService {
     try {
       // First, try to get from local database
       // Handle both numeric ID and string profileId
-      const isNumeric = !isNaN(Number(profileId));
-      const profile = isNumeric
-        ? await db.select()
-            .from(brandProfiles)
-            .where(eq(brandProfiles.id, parseInt(profileId)))
-            .limit(1)
-        : await db.select()
-            .from(brandProfiles)
-            .where(eq(brandProfiles.profileId, profileId))
-            .limit(1);
+      const profile = await BrandProfile.findOne({ profileId: profileId.toString() });
 
-      if (profile.length > 0) {
-        const brandProfile = profile[0];
-        
+      if (profile) {
         // Check if we have a brand kit in local DB
-        const brandKit = await db.select()
-          .from(brandKits)
-          .where(eq(brandKits.brandProfileId, brandProfile.id))
-          .limit(1);
+        const brandKit = await BrandKit.findOne({ brandProfileId: profile._id });
 
-        if (brandKit.length > 0 && brandKit[0].kitData) {
+        if (brandKit && brandKit.kitData) {
           console.log('✅ Found brand kit in local database');
-          const kitData = brandKit[0].kitData as any;
-          
+          const kitData = brandKit.kitData as any;
+
           // Ensure comprehensive structure exists
           if (!kitData.comprehensive) {
             console.warn('⚠️ Brand kit missing comprehensive structure, may need re-analysis');
             return null; // Signal re-analysis needed
           }
-          
+
           return kitData;
         }
 
         // If no local kit but profile is complete, try to re-analyze
-        if (brandProfile.status === 'complete' && brandProfile.brandKit) {
+        if (profile.status === 'complete' && profile.brandKit) {
           console.log('⚠️ No local brand kit found, but profile is complete. Attempting to create from profile data...');
           // This will be handled by the re-analyze endpoint
           return null; // Signal that re-analysis is needed
         }
 
         // If profile is complete, try fetching from backend with comprehensive format
-        if (brandProfile.status === 'complete' && brandProfile.jobId) {
+        if (profile.status === 'complete' && profile.jobId) {
           try {
-            const response = await axios.get(`${envConfigs.aiBackendUrl}/v2/brand-intelligence/jobs/${brandProfile.jobId}?format=comprehensive`);
+            const response = await axios.get(`${envConfigs.aiBackendUrl}/v2/brand-intelligence/jobs/${profile.jobId}?format=comprehensive`);
             if (response.data.status === 'complete' && response.data.result) {
               console.log('✅ Found brand kit data in backend API with comprehensive format');
               // Backend returns comprehensive format directly - we can use it
@@ -281,14 +253,11 @@ export default class BrandKitsService {
   static async fetchBrandKit(kitId: string) {
     try {
       // First try to get from local DB by kit ID
-      const kit = await db.select()
-        .from(brandKits)
-        .where(eq(brandKits.id, parseInt(kitId)))
-        .limit(1);
+      const kit = await BrandKit.findById(kitId);
 
-      if (kit.length > 0 && kit[0].kitData) {
+      if (kit && kit.kitData) {
         console.log('✅ Found brand kit in local database by ID');
-        return kit[0].kitData;
+        return kit.kitData;
       }
 
       // Fallback to backend API
@@ -313,10 +282,8 @@ export default class BrandKitsService {
           headers: { Accept: "text/html" },
         }
       );
-      // console.log("response.data....",response.data)  
       return response.data; // HTML string
     } catch (error: any) {
-      // console.log("error.... report",error)
       if (error.response && error.response.status === 422) {
         return JSON.stringify({ detail: error.response.data.detail });
       }
@@ -325,6 +292,3 @@ export default class BrandKitsService {
   }
 
 }
-
-
-

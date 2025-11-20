@@ -22,7 +22,7 @@ const defaultRoutes = [
   },
   {
     path: "/brand-kits",
-    route: brandKit 
+    route: brandKit
   },
   {
     path: "/visited",
@@ -44,7 +44,6 @@ const defaultRoutes = [
     path: "/text-generation",
     route: textGeneration
   }
-  // {
 ]
 
 defaultRoutes.forEach((route) => {

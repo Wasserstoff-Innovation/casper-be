@@ -1,10 +1,10 @@
 import axios from "axios";
-import db from "../config/db";
-import { brandProfiles, brandKits, brandRoadmapCampaigns, brandRoadmapTasks, brandSocialProfiles } from "../model/schema";
-import { eq, desc } from "drizzle-orm";
+import { BrandProfile, BrandKit, BrandRoadmapCampaign, BrandRoadmapTask, BrandSocialProfile } from "../models";
+import { Types } from "mongoose";
 import { envConfigs } from "../config/envConfig";
 import { BrandKitTransformer } from "./brandKitTransformer";
 import { BrandDataExtractor } from "./brandDataExtractor";
+import { toObjectId } from '../utils/mongoHelpers';
 
 // Wisdom Tree API endpoint for brand intelligence
 const API_BASE_URL = `${envConfigs.aiBackendUrl}/v2/brand-intelligence/wisdom-tree`;
@@ -60,6 +60,7 @@ export default class BrandProfileService {
     const payload: any = {
       url: url,
       depth: input.depth || 'medium',
+      userId: input.userId, // Send userId to Python (matches Python's camelCase field name)
     };
 
     // Add override_persona if provided
@@ -164,22 +165,14 @@ export default class BrandProfileService {
     }
 
     const { job_id, status, message } = response.data;
-    
-    // Save job_id and status in DB
-    const inserted = await db.insert(brandProfiles).values({
-      userId: input.userId,
-      jobId: job_id,
-      profileId: null, // will update later when job completes
-      status: status || 'queued',
-      // Note: jobStartedAt will be set when job status changes to 'processing'
-      data: { status, job_id, message, url },
-      brandKit: null, // Will be populated when job completes
-      brandScores: null, // Will be populated when job completes
-      brandRoadmap: null, // Will be populated when job completes
-      analysis_context: null, // NEW: Will be populated when job completes
-    }).returning();
 
-    return inserted[0];
+    // Python backend will create the BrandProfile record with userId
+    // Just return the job info
+    return {
+      jobId: job_id,
+      status: status || 'queued',
+      message: message
+    };
   } catch (error: any) {
     console.error('❌ Error creating Brand Profile Job:');
     console.error('  Message:', error.message);
@@ -213,374 +206,75 @@ static async getModuleJobStatus(jobId: string) {
 }
 
 // Get Job Status
+// NOTE: Check brand_intelligence_jobs first for status, then brand_profiles for complete data
 static async getBrandProfileJobStatus(jobId: string) {
   try {
-    let response;
-    try {
-      // Try regular job endpoint first
-      response = await axios.get(`${API_BASE_URL}/jobs/${jobId}`);
-    } catch (regularJobError: any) {
-      // If 404 or "Job not found", try module endpoint
-      if (regularJobError.response?.status === 404 ||
-          regularJobError.response?.data?.detail === 'Job not found') {
-        console.log('⚠️ Regular job not found, trying module job endpoint...');
-        return await this.getModuleJobStatus(jobId);
-      }
-      throw regularJobError;
-    }
+    // Call Python backend for real-time job status (from brand_intelligence_jobs)
+    const response = await axios.get(`${API_BASE_URL}/jobs/${jobId}`);
+    const jobStatus = response.data;
 
-    const { job_id, status, result, error } = response.data;
-
-    // Get current job record to check if status changed
-    const currentJob = await db.select()
-      .from(brandProfiles)
-      .where(eq(brandProfiles.jobId, jobId))
-      .limit(1);
-
-    // Prepare update data
-    const updateData: any = {
-      status: status,
-      updated_at: new Date(),
-      data: { ...response.data } // Store full response for backward compatibility
-    };
-
-    // If job status changed to 'processing' from 'queued', set jobStartedAt
-    if (currentJob.length > 0 && currentJob[0].status === 'queued' && status === 'processing') {
-      updateData.jobStartedAt = new Date(); // Track when job started processing
-      console.log('✅ Job started processing, setting jobStartedAt');
-    }
-
-    // If job is complete, extract and store structured data
-    // Wisdom Tree API returns comprehensive format with analysis_context
-    if (status === 'complete' && result) {
-      updateData.profileId = job_id; // Use job_id as profileId for v2
-      updateData.jobCompletedAt = new Date(); // Track when job completed
-      // Also set jobStartedAt if it wasn't set (in case we missed the 'processing' status)
-      if (currentJob.length > 0 && !currentJob[0].jobStartedAt) {
-        updateData.jobStartedAt = new Date(); // Fallback: set started time same as completion
-      }
-      // Store comprehensive format (preferred) or fallback to brand_kit
-      updateData.brandKit = result.comprehensive || result.brand_kit || null;
-      updateData.brandScores = result.brand_scores || null;
-      updateData.brandRoadmap = result.brand_roadmap || null;
-      updateData.analysis_context = result.analysis_context || null; // NEW: Store analysis context
-
-      // Extract summary columns for fast queries
+    // If job is complete, fetch full aggregated data from brand_profiles
+    if (jobStatus.status === 'complete') {
       try {
-        const summary = BrandDataExtractor.extractSummaryColumns(result);
-        Object.assign(updateData, summary);
-        console.log('✅ Extracted summary columns:', summary);
-      } catch (extractError: any) {
-        console.error('⚠️ Failed to extract summary columns:', extractError.message);
-        // Don't fail the whole operation if summary extraction fails
-      }
-    }
+        const profile = await BrandProfile.findOne({ jobId: jobId }).lean();
 
-    // If job failed, store error message and completion time
-    if (status === 'failed' && error) {
-      updateData.jobError = error; // Store error in new jobError field
-      updateData.jobCompletedAt = new Date(); // Track when job failed
-      // Also set jobStartedAt if it wasn't set (in case we missed the 'processing' status)
-      if (currentJob.length > 0 && !currentJob[0].jobStartedAt) {
-        updateData.jobStartedAt = new Date(); // Fallback: set started time same as failure
-      }
-    }
-
-    // Update brandProfiles table
-    const updated = await db.update(brandProfiles)
-      .set(updateData)
-      .where(eq(brandProfiles.jobId, jobId))
-      .returning();
-
-    // AUTO-CREATE BRAND KIT: If job is complete, auto-create the brand kit
-    // Backend now returns comprehensive format directly when format=comprehensive
-    if (status === 'complete' && result && updated.length > 0) {
-      const brandProfile = updated[0];
-      
-      // Check if brand kit already exists for this profile
-      const existingKit = await db.select()
-        .from(brandKits)
-        .where(eq(brandKits.brandProfileId, brandProfile.id))
-        .limit(1);
-      
-      // Auto-create brand kit using comprehensive format from backend
-      try {
-        console.log('🔄 Auto-creating brand kit for job:', job_id);
-        
-        // Backend returns comprehensive format directly when format=comprehensive
-        // Structure: result.comprehensive (the comprehensive brand kit from Python transformer)
-        //           result.brand_kit (may also contain comprehensive format with FieldValue objects)
-        //           result.brand_scores
-        //           result.brand_roadmap
-
-        let comprehensiveBrandKit = result.comprehensive;
-
-        // UPDATED: Check if result.brand_kit has comprehensive format (FieldValue objects)
-        if (!comprehensiveBrandKit && result.brand_kit) {
-          // Check if brand_kit has comprehensive sections with FieldValue structure
-          const hasComprehensiveFormat =
-            result.brand_kit.verbal_identity?.elevator_pitch?.value !== undefined ||
-            result.brand_kit.audience_positioning?.primary_icp?.value !== undefined ||
-            result.brand_kit.proof_trust?.testimonials?.value !== undefined;
-
-          if (hasComprehensiveFormat) {
-            console.log('✅ Using result.brand_kit as comprehensive format (has FieldValue objects)');
-            comprehensiveBrandKit = result.brand_kit;
-          } else {
-            console.warn('⚠️ No comprehensive format in result - falling back to TypeScript transformer');
-            console.log('⚠️ Falling back to TypeScript transformer');
-            const domain = result.brand_kit.domain || 'unknown';
-            const transformed = BrandKitTransformer.transformV2ToBrandKit(result, domain);
-
-            // Set comprehensiveBrandKit to the transformed data for use below
-            comprehensiveBrandKit = transformed;
-
-            const kitData = {
-              comprehensive: transformed,
-              v2_raw: {
-                brand_kit: result.brand_kit,
-                brand_scores: result.brand_scores,
-                brand_roadmap: result.brand_roadmap,
-                generated_at: result.brand_kit.generated_at,
-              },
-              format_version: '2.0',
-              source: 'v2_brand_intelligence_auto_fallback',
-              generated_at: result.brand_kit.generated_at || new Date().toISOString(),
-            };
-
-            const savedKit = await db.insert(brandKits)
-              .values({
-                userId: brandProfile.userId,
-                brandProfileId: brandProfile.id,
-                kitData: kitData,
-                created_at: new Date(),
-                updated_at: new Date(),
-              })
-              .onConflictDoUpdate({
-                target: brandKits.brandProfileId,
-                set: {
-                  kitData: kitData,
-                  updated_at: new Date(),
-                },
-              })
-              .returning();
-
-            console.log('✅ Brand kit created using TypeScript transformer fallback');
-            // Don't return here - continue to roadmap/social profile extraction below
-          }
-        } else if (!comprehensiveBrandKit) {
-          throw new Error('No brand kit data available in result');
-        }
-        
-        // Only save if we haven't already saved in the fallback block above
-        // Save when: result.comprehensive exists OR result.brand_kit was used as comprehensive format
-        if (result.comprehensive || (comprehensiveBrandKit === result.brand_kit)) {
-          console.log('✅ Comprehensive brand kit received from backend. Sections:', Object.keys(comprehensiveBrandKit));
-
-          // Prepare kit data structure - use comprehensive format directly from backend
-          const kitData = {
-            // Comprehensive structured format (from backend Python transformer)
-            comprehensive: comprehensiveBrandKit,
-            // Raw v2 data (for backward compatibility and debug)
-            v2_raw: {
-              brand_kit: result.brand_kit || {},
-              brand_scores: result.brand_scores || {},
-              brand_roadmap: result.brand_roadmap || {},
-              generated_at: result.brand_kit?.generated_at || comprehensiveBrandKit.meta?.audit_timestamp?.value,
+        if (profile) {
+          // Job complete + profile exists = return full data
+          return {
+            job_id: jobId,
+            status: 'complete',
+            progress: jobStatus.progress || null,
+            result: {
+              profile_id: profile.profileId,
+              brand_kit: profile.brandKit,
+              brand_scores: profile.brandScores,
+              brand_roadmap: profile.brandRoadmap,
+              analysis_context: profile.analysis_context,
             },
-            // Metadata
-            format_version: '2.0',
-            source: 'v2_brand_intelligence_auto',
-            generated_at: result.brand_kit?.generated_at || comprehensiveBrandKit.meta?.audit_timestamp?.value || new Date().toISOString(),
+            error: null
           };
-
-          console.log('💾 Saving brand kit to database...');
-          const savedKit = await db.insert(brandKits)
-            .values({
-              userId: brandProfile.userId,
-              brandProfileId: brandProfile.id,
-              kitData: kitData,
-              created_at: new Date(),
-              updated_at: new Date(),
-            })
-            .onConflictDoUpdate({
-              target: brandKits.brandProfileId,
-              set: {
-                kitData: kitData,
-                updated_at: new Date(),
-              },
-            })
-            .returning();
-
-          if (!savedKit || savedKit.length === 0) {
-            throw new Error('Failed to save brand kit - no record returned');
-          }
-
-          // Verify the kitData was saved correctly
-          const verifyKit = await db.select()
-            .from(brandKits)
-            .where(eq(brandKits.id, savedKit[0].id))
-            .limit(1);
-
-          if (verifyKit.length === 0) {
-            throw new Error('Brand kit was not found after save');
-          }
-
-          const savedKitData = verifyKit[0].kitData as any;
-          console.log('✅ Auto-created brand kit for profile:', job_id);
-          console.log('📦 Brand kit ID:', savedKit[0]?.id);
-          console.log('📋 Kit data structure:', {
-            hasComprehensive: !!savedKitData?.comprehensive,
-            hasV2Raw: !!savedKitData?.v2_raw,
-            comprehensiveKeys: savedKitData?.comprehensive ? Object.keys(savedKitData.comprehensive) : [],
-            brandName: savedKitData?.comprehensive?.meta?.brand_name?.value || savedKitData?.v2_raw?.brand_name,
-          });
         }
-
-        // Normalize roadmap into relational tables
-        try {
-          console.log('🔄 Normalizing roadmap data...');
-          const roadmapData = BrandDataExtractor.extractRoadmapData(result.brand_roadmap, brandProfile.id);
-
-          // Insert campaigns
-          if (roadmapData.campaigns.length > 0) {
-            await db.insert(brandRoadmapCampaigns)
-              .values(roadmapData.campaigns)
-              .onConflictDoUpdate({
-                target: brandRoadmapCampaigns.id,
-                set: {
-                  title: roadmapData.campaigns[0].title,
-                  updatedAt: new Date(),
-                },
-              });
-            console.log(`✅ Inserted ${roadmapData.campaigns.length} campaigns`);
-          }
-
-          // Insert tasks
-          if (roadmapData.tasks.length > 0) {
-            await db.insert(brandRoadmapTasks)
-              .values(roadmapData.tasks)
-              .onConflictDoUpdate({
-                target: brandRoadmapTasks.id,
-                set: {
-                  status: roadmapData.tasks[0].status,
-                  updatedAt: new Date(),
-                },
-              });
-            console.log(`✅ Inserted ${roadmapData.tasks.length} tasks`);
-          }
-        } catch (roadmapError: any) {
-          console.error('⚠️ Failed to normalize roadmap:', roadmapError.message);
-          // Don't fail the whole operation
-        }
-
-        // Extract and save social profiles
-        try {
-          console.log('🔄 Extracting social profiles...');
-          const socialProfiles = BrandDataExtractor.extractSocialProfiles(comprehensiveBrandKit);
-
-          if (socialProfiles.length > 0) {
-            const profilesData = socialProfiles.map(profile => ({
-              brandProfileId: brandProfile.id,
-              platform: profile.platform,
-              profileType: profile.profileType,
-              url: profile.url,
-              status: profile.status,
-              source: profile.source,
-            }));
-
-            // Delete existing profiles for this brand and insert new ones
-            await db.delete(brandSocialProfiles)
-              .where(eq(brandSocialProfiles.brandProfileId, brandProfile.id));
-
-            await db.insert(brandSocialProfiles).values(profilesData);
-            console.log(`✅ Inserted ${socialProfiles.length} social profiles`);
-          } else {
-            console.log('ℹ️ No social profiles found');
-          }
-        } catch (socialError: any) {
-          console.error('⚠️ Failed to extract social profiles:', socialError.message);
-          // Don't fail the whole operation
-        }
-
-      } catch (kitError: any) {
-        console.error('❌ Failed to auto-create brand kit:', kitError.message);
-        console.error('❌ Error stack:', kitError.stack);
-        console.error('❌ Result structure:', JSON.stringify(result, null, 2).substring(0, 500));
-        // Don't fail the whole request if brand kit creation fails
+      } catch (dbError) {
+        console.warn('Job complete but profile not found in DB yet:', dbError);
+        // Fall through to return job status without results
       }
     }
 
-    return response.data;
+    // Job is queued/running, or profile not ready yet - return status only
+    return jobStatus;
   } catch (error: any) {
-    console.error('Error fetching Job Status:', error.response?.data || error.message);
+    console.error('Error fetching Job Status from Python backend:', error.response?.data || error.message);
     throw error;
   }
 }
 
 // Get Brand Profile
-// For v2, we can get the profile from the database directly using profileId
-// Or fetch from API if needed. Since v2 returns everything in job status,
-// we'll primarily use the database record.
+// NOTE: Python backend writes directly to MongoDB, so we just read from DB
 static async getBrandProfile(profileId: string) {
   try {
-    // First try to get from database
-    const profile = await db.select()
-      .from(brandProfiles)
-      .where(eq(brandProfiles.profileId, profileId))
-      .limit(1);
+    // Python backend has already written to MongoDB
+    // Just query the database directly
+    const profile = await BrandProfile.findOne({ profileId: profileId }).lean();
 
-    if (profile.length > 0 && profile[0].status === 'complete') {
-      // Return structured v2 data from database
-      return {
-        job_id: profile[0].jobId,
-        profile_id: profile[0].profileId,
-        status: profile[0].status,
-        result: {
-          brand_kit: profile[0].brandKit,
-          brand_scores: profile[0].brandScores,
-          brand_roadmap: profile[0].brandRoadmap
-        },
-        // Include full data for backward compatibility
-        data: profile[0].data
-      };
+    if (!profile) {
+      throw new Error(`Brand profile not found for profileId: ${profileId}`);
     }
 
-    // If not found in DB or incomplete, try fetching from backend API
-    try {
-      // Try v2 API first (using job_id if we have it) - request comprehensive format
-      if (profile.length > 0 && profile[0].jobId) {
-        const jobResponse = await axios.get(`${API_BASE_URL}/jobs/${profile[0].jobId}?format=comprehensive`);
-        if (jobResponse.data.status === 'complete' && jobResponse.data.result) {
-          // Update our DB with the fresh data
-          await db.update(brandProfiles)
-            .set({
-              status: 'complete',
-              brandKit: jobResponse.data.result.comprehensive || jobResponse.data.result.brand_kit,
-              brandScores: jobResponse.data.result.brand_scores,
-              brandRoadmap: jobResponse.data.result.brand_roadmap,
-              updated_at: new Date(),
-            })
-            .where(eq(brandProfiles.profileId, profileId));
-          
-          return {
-            job_id: profile[0].jobId,
-            profile_id: profileId,
-            status: 'complete',
-            result: jobResponse.data.result,
-            data: jobResponse.data
-          };
-        }
-      }
-      
-      // Fallback to v1 API (legacy support)
-      const response = await axios.get(`${envConfigs.aiBackendUrl}/v1/brand-profiles/${profileId}`);
-    return response.data;
-    } catch (apiError: any) {
-      // If API also fails, only then say it's not available
-      console.error('Error fetching Brand Profile from API:', apiError.response?.data || apiError.message);
-      throw new Error(`Brand profile not found in database or backend API. Profile ID: ${profileId}`);
-    }
+    // Return the profile data (which Python already populated)
+    return {
+      job_id: profile.jobId,
+      profile_id: profile.profileId,
+      status: profile.status,
+      result: profile.status === 'complete' ? {
+        brand_kit: profile.brandKit,
+        brand_scores: profile.brandScores,
+        brand_roadmap: profile.brandRoadmap,
+        analysis_context: profile.analysis_context
+      } : null,
+      error: profile.jobError || null,
+      // Include full data for backward compatibility
+      data: profile.data
+    };
   } catch (error: any) {
     console.error('Error fetching Brand Profile:', error.message);
     throw error;
@@ -591,48 +285,17 @@ static async getBrandProfile(profileId: string) {
 static async reAnalyzeBrandKit(jobId: string) {
   try {
     console.log('🔄 Re-analyzing brand kit for job:', jobId);
-    
-    // Get the brand profile
-    const profile = await db.select()
-      .from(brandProfiles)
-      .where(eq(brandProfiles.jobId, jobId))
-      .limit(1);
 
-    if (profile.length === 0) {
+    // Get the brand profile
+    const brandProfile = await BrandProfile.findOne({ jobId: jobId });
+
+    if (!brandProfile) {
       throw new Error('Brand profile not found for job: ' + jobId);
     }
 
-    const brandProfile = profile[0];
-
-    // Check if we have completed data
+    // Check if we have completed data in DB (Python should have already written it)
     if (brandProfile.status !== 'complete') {
-      // Try to fetch fresh status from backend with comprehensive format
-      try {
-        const response = await axios.get(`${API_BASE_URL}/jobs/${jobId}?format=comprehensive`);
-        const { status, result } = response.data;
-        
-        if (status === 'complete' && result) {
-          // Update DB with fresh data
-          await db.update(brandProfiles)
-            .set({
-              status: 'complete',
-              brandKit: result.comprehensive || result.brand_kit,
-              brandScores: result.brand_scores,
-              brandRoadmap: result.brand_roadmap,
-              updated_at: new Date(),
-            })
-            .where(eq(brandProfiles.jobId, jobId));
-          
-          // Use the fresh data
-          brandProfile.brandKit = result.comprehensive || result.brand_kit;
-          brandProfile.brandScores = result.brand_scores;
-          brandProfile.brandRoadmap = result.brand_roadmap;
-        } else {
-          throw new Error(`Job ${jobId} is not complete. Status: ${status}`);
-        }
-      } catch (apiError: any) {
-        throw new Error(`Cannot re-analyze: Job is not complete and backend API unavailable. Status: ${brandProfile.status}`);
-      }
+      throw new Error(`Cannot re-analyze: Job is not complete. Status: ${brandProfile.status}. Wait for Python to complete processing.`);
     }
 
     // Get comprehensive format from backend (preferred) or use local data
@@ -723,29 +386,27 @@ static async reAnalyzeBrandKit(jobId: string) {
       generated_at: new Date().toISOString(),
     };
 
-    const savedKit = await db.insert(brandKits)
-      .values({
+    const savedKit = await BrandKit.findOneAndUpdate(
+      { brandProfileId: brandProfile._id },
+      {
         userId: brandProfile.userId,
-        brandProfileId: brandProfile.id,
+        brandProfileId: brandProfile._id,
         kitData: kitData,
-        created_at: new Date(),
         updated_at: new Date(),
-      })
-      .onConflictDoUpdate({
-        target: brandKits.brandProfileId,
-        set: {
-          kitData: kitData,
-          updated_at: new Date(),
-        },
-      })
-      .returning();
+      },
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true,
+      }
+    );
 
-    console.log('✅ Brand kit re-analyzed and saved. Kit ID:', savedKit[0]?.id);
+    console.log('✅ Brand kit re-analyzed and saved. Kit ID:', savedKit._id);
 
     return {
       success: true,
       message: 'Brand kit re-analyzed successfully',
-      brandKit: savedKit[0],
+      brandKit: savedKit,
     };
   } catch (error: any) {
     console.error('❌ Error re-analyzing brand kit:', error.message);
@@ -756,22 +417,10 @@ static async reAnalyzeBrandKit(jobId: string) {
 // Get job history for a user
 static async getJobHistory(userId: number) {
   try {
-    const jobs = await db.select({
-      id: brandProfiles.id,
-      jobId: brandProfiles.jobId,
-      url: brandProfiles.canonical_domain,
-      brandName: brandProfiles.brand_name,
-      status: brandProfiles.status,
-      jobStartedAt: brandProfiles.jobStartedAt,
-      jobCompletedAt: brandProfiles.jobCompletedAt,
-      jobError: brandProfiles.jobError,
-      personaId: brandProfiles.persona_id,
-      entityType: brandProfiles.entity_type,
-      createdAt: brandProfiles.created_at,
-    })
-      .from(brandProfiles)
-      .where(eq(brandProfiles.userId, userId))
-      .orderBy(desc(brandProfiles.created_at)); // Newest first
+    const jobs = await BrandProfile.find({ userId: toObjectId(userId) })
+      .select('_id jobId canonical_domain brand_name status jobStartedAt jobCompletedAt jobError persona_id entity_type created_at')
+      .sort({ created_at: -1 }) // Newest first
+      .lean();
 
     // Transform to match API spec with enhanced metadata
     return jobs.map((job: any) => {
@@ -785,17 +434,17 @@ static async getJobHistory(userId: number) {
 
       return {
         id: job.jobId,
-        url: job.url,
-        brandName: job.brandName,
+        url: job.canonical_domain,
+        brandName: job.brand_name,
         status: job.status,
-        brandProfileId: job.id,
+        brandProfileId: job._id.toString(),
         startedAt: job.jobStartedAt,
         completedAt: job.jobCompletedAt,
         error: job.jobError,
-        createdAt: job.createdAt,
+        createdAt: job.created_at,
         // Enhanced metadata
-        personaId: job.personaId,
-        entityType: job.entityType,
+        personaId: job.persona_id,
+        entityType: job.entity_type,
         durationSeconds: durationSeconds,
         isFailed: job.status === 'failed',
         isComplete: job.status === 'complete',
@@ -811,19 +460,14 @@ static async getJobHistory(userId: number) {
 // Get job details by job_id
 static async getJobDetails(jobId: string, userId: number) {
   try {
-    const jobs = await db.select()
-      .from(brandProfiles)
-      .where(eq(brandProfiles.jobId, jobId))
-      .limit(1);
+    const job = await BrandProfile.findOne({ jobId: jobId }).lean();
 
-    if (jobs.length === 0) {
+    if (!job) {
       return null;
     }
 
-    const job = jobs[0];
-
     // Check if job belongs to user
-    if (job.userId !== userId) {
+    if (job.userId?.toString() !== toObjectId(userId).toString()) {
       throw new Error('Unauthorized: Job does not belong to this user');
     }
 
@@ -832,7 +476,7 @@ static async getJobDetails(jobId: string, userId: number) {
       url: job.canonical_domain,
       brandName: job.brand_name,
       status: job.status,
-      brandProfileId: job.id,
+      brandProfileId: job._id.toString(),
       result: {
         brandKit: job.brandKit,
         brandScores: job.brandScores,
@@ -852,10 +496,10 @@ static async getJobDetails(jobId: string, userId: number) {
 
 // Re-analyze specific module for a brand profile
 static async analyzeModule(
-  profileId: number,
+  profileId: string,
   userId: number,
   module: string,
-  options?: {
+  _options?: {
     include_screenshots?: boolean;
     include_web_search?: boolean;
   }
@@ -885,24 +529,19 @@ static async analyzeModule(
       console.log(`⚠️ Using persona-specific or custom module: ${module}`);
     }
 
-    // Get existing profile
-    const profiles = await db.select()
-      .from(brandProfiles)
-      .where(eq(brandProfiles.id, profileId))
-      .limit(1);
+    // Get existing profile by _id
+    const profile = await BrandProfile.findById(profileId);
 
-    if (profiles.length === 0) {
+    if (!profile) {
       throw new Error('Brand profile not found');
     }
 
-    const profile = profiles[0];
-
     // Check ownership
-    if (profile.userId !== userId) {
+    if (profile.userId?.toString() !== toObjectId(userId).toString()) {
       throw new Error('Unauthorized: Profile does not belong to this user');
     }
 
-    if (!profile.canonical_domain) {
+    if (!profile.domain && !profile.canonical_domain) {
       throw new Error('Profile does not have a domain URL');
     }
 
@@ -955,16 +594,12 @@ static async analyzeModule(
 static async mergeModuleResults(profileId: number, module: string, moduleData: any) {
   try {
     // Get existing profile
-    const profiles = await db.select()
-      .from(brandProfiles)
-      .where(eq(brandProfiles.id, profileId))
-      .limit(1);
+    const profile = await BrandProfile.findOne({ profileId: profileId.toString() });
 
-    if (profiles.length === 0) {
+    if (!profile) {
       throw new Error('Brand profile not found');
     }
 
-    const profile = profiles[0];
     const existingBrandKit = profile.brandKit as any || {};
 
     // Merge module data into existing brand kit
@@ -974,12 +609,14 @@ static async mergeModuleResults(profileId: number, module: string, moduleData: a
     };
 
     // Update database
-    await db.update(brandProfiles)
-      .set({
+    await BrandProfile.findByIdAndUpdate(
+      profileId,
+      {
         brandKit: updatedBrandKit,
         updated_at: new Date(),
-      })
-      .where(eq(brandProfiles.id, profileId));
+      },
+      { new: true }
+    );
 
     console.log(`✅ Module "${module}" merged into brand kit for profile ${profileId}`);
 

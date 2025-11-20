@@ -5,9 +5,8 @@
  * Optional fallbacks for convenience.
  */
 
-import db from '../config/db';
-import { brandProfiles } from '../model/schema';
-import { eq } from 'drizzle-orm';
+import { BrandProfile } from '../models';
+import { toObjectId } from '../utils/mongoHelpers';
 
 export class BrandIdentifier {
   /**
@@ -47,13 +46,12 @@ export class BrandIdentifier {
     profileId: string
   ): Promise<boolean> {
     try {
-      const brandProfile = await db.select()
-        .from(brandProfiles)
-        .where(eq(brandProfiles.profileId, profileId))
-        .where(eq(brandProfiles.userId, userId))
-        .limit(1);
-      
-      return brandProfile.length > 0;
+      const brandProfile = await BrandProfile.findOne({
+        profileId: profileId,
+        userId: toObjectId(userId)
+      }).lean();
+
+      return !!brandProfile;
     } catch (error: any) {
       console.error('❌ Error validating brand ownership:', error.message);
       return false;
@@ -74,15 +72,12 @@ export class BrandIdentifier {
     updated_at: Date | null;
   }>> {
     try {
-      const profiles = await db.select({
-        profileId: brandProfiles.profileId,
-        brandKit: brandProfiles.brandKit,
-        status: brandProfiles.status,
-        updated_at: brandProfiles.updated_at,
+      const profiles = await BrandProfile.find({
+        userId: toObjectId(userId)
       })
-        .from(brandProfiles)
-        .where(eq(brandProfiles.userId, userId));
-      
+        .select('profileId brandKit status updated_at')
+        .lean();
+
       return profiles.map((profile: any) => {
         const brandKit = profile.brandKit as any;
         const brandName = brandKit?.comprehensive?.meta?.brand_name?.value ||
@@ -91,7 +86,7 @@ export class BrandIdentifier {
         const domain = brandKit?.comprehensive?.meta?.canonical_domain?.value ||
                       brandKit?.domain ||
                       null;
-        
+
         return {
           profile_id: profile.profileId || '',
           brand_name: brandName,

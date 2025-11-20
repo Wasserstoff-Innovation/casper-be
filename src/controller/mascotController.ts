@@ -1,10 +1,8 @@
 import { Request, Response } from 'express';
 import { mascotClient } from '../services/apiClient';
 import { handleApiError, ImageGenerationError } from '../utils/errorHandler';
-import { eq } from 'drizzle-orm';
 import { JobService } from '../services/jobServices';
-import db from '../config/db';
-import { mascotGenerations } from '../model/schema';
+import { MascotGeneration } from '../models';
 import FormData from 'form-data';
 import { MulterFiles } from '../utils/multer';
 import { BrandIdentifier } from '../services/brandIdentifier';
@@ -65,7 +63,7 @@ export class MascotController {
       }
       const job = await JobService.createJob(userId, 'mascot', payload);
 
-      await db.insert(mascotGenerations).values({
+      await MascotGeneration.create({
         userId,
         jobId: response.job_id,
         selectedPrompt: req.body.prompt
@@ -111,7 +109,7 @@ export class MascotController {
       }
       const response = await mascotClient.postFormData('/api/v1/mascot/sessions', formData);
 
-      await db.insert(mascotGenerations).values({
+      await MascotGeneration.create({
         userId,
         sessionId: response.session_id,
         finalImageUrl: response.initial_image_url,
@@ -161,9 +159,11 @@ export class MascotController {
       );
       console.log('🎨 Mascot edit applied:', response);
       const job = await JobService.createJob(userId, 'mascot_edit', response);
-      const updateMoscatJobId = await db.update(mascotGenerations)
-        .set({ jobId: job.jobId })
-        .where(eq(mascotGenerations.sessionId, sessionId));
+      const updateMoscatJobId = await MascotGeneration.findOneAndUpdate(
+        { sessionId: sessionId },
+        { jobId: job.jobId },
+        { new: true }
+      );
       res.status(202).json({
         success: true,
         data: response
@@ -205,9 +205,11 @@ export class MascotController {
         });
 
         if (status.status === 'completed' && status.result) {
-          await db.update(mascotGenerations)
-            .set({ finalImageUrl: status.result.image_url })
-            .where(eq(mascotGenerations.jobId, jobId));
+          await MascotGeneration.findOneAndUpdate(
+            { jobId: jobId },
+            { finalImageUrl: status.result.image_url },
+            { new: true }
+          );
         }
       }
       res.json({success: true,data: status});

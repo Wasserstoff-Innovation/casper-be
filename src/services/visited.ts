@@ -1,18 +1,14 @@
-import { eq } from "drizzle-orm";
-import { visitedUsers } from "../model/schema";
-import db from "../config/db";
+import { VisitedUser } from "../models";
 
 export class VisitedUserService {
   static async createVisitedUser(data: any) {
-    const existingUser = await db
-      .select()
-      .from(visitedUsers)
-      .where(eq(visitedUsers.email, data.email));
+    const existingUser = await VisitedUser.findOne({ email: data.email });
 
-    if (existingUser.length > 0) {
-      return { status: "already_submitted", user: existingUser[0] };
+    if (existingUser) {
+      return { status: "already_submitted", user: existingUser };
     }
-    const [newUser] = await db.insert(visitedUsers).values(data).returning();
+
+    const newUser = await VisitedUser.create(data);
     return { status: "success", user: newUser };
   }
 }
