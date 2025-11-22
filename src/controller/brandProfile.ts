@@ -401,4 +401,89 @@ static analyzeSocial = async (req: Request, res: Response) => {
   return BrandProfileController.analyzeModule(req, res);
 };
 
+// NEW: Update brand profile fields
+static updateProfile = async (req: Request, res: Response) => {
+  try {
+    const user: any = req.user;
+    if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const profileId = req.params.id;
+    const userId = user.userId;
+    const updates = req.body;
+
+    console.log(`Updating profile ${profileId} with:`, Object.keys(updates));
+
+    const result = await BrandProfileService.updateProfile(profileId, userId, updates);
+    res.status(200).json(result);
+  } catch (err: any) {
+    console.error("Error updating profile:", err);
+    if (err.message.includes('not found')) {
+      return res.status(404).json({ error: err.message });
+    }
+    if (err.message.includes('Unauthorized')) {
+      return res.status(403).json({ error: err.message });
+    }
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// NEW: Update brand kit fields
+static updateBrandKit = async (req: Request, res: Response) => {
+  try {
+    const user: any = req.user;
+    if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const profileId = req.params.id;
+    const userId = user.userId;
+    const updates = req.body;
+
+    console.log(`Updating brand kit for profile ${profileId} with:`, Object.keys(updates));
+
+    const result = await BrandProfileService.updateBrandKit(profileId, userId, updates);
+    res.status(200).json(result);
+  } catch (err: any) {
+    console.error("Error updating brand kit:", err);
+    if (err.message.includes('not found')) {
+      return res.status(404).json({ error: err.message });
+    }
+    if (err.message.includes('Unauthorized')) {
+      return res.status(403).json({ error: err.message });
+    }
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// NEW: Update social profile for a platform
+static updateSocialProfile = async (req: Request, res: Response) => {
+  try {
+    const user: any = req.user;
+    if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const profileId = req.params.id;
+    const platform = req.params.platform;
+    const userId = user.userId;
+    const updates = req.body; // { handle, url, status }
+
+    console.log(`Updating social profile ${platform} for profile ${profileId}`);
+
+    const result = await BrandProfileService.updateSocialProfile(profileId, userId, platform, updates);
+    res.status(200).json(result);
+  } catch (err: any) {
+    console.error("Error updating social profile:", err);
+    if (err.message.includes('not found')) {
+      return res.status(404).json({ error: err.message });
+    }
+    if (err.message.includes('Unauthorized')) {
+      return res.status(403).json({ error: err.message });
+    }
+    res.status(500).json({ error: err.message });
+  }
+};
+
 }

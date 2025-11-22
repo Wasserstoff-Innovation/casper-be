@@ -71,8 +71,8 @@ export interface IBrandKit extends Document {
 
 const BrandKitSchema = new Schema<IBrandKit>({
   userId: { type: Schema.Types.ObjectId, ref: 'User' },
-  profileId: { type: String }, // Python stores as string
-  brandProfileId: { type: Schema.Types.ObjectId, ref: 'BrandProfile', unique: true },
+  profileId: { type: String, unique: true }, // Python stores as string - this is the primary lookup
+  brandProfileId: { type: Schema.Types.ObjectId, ref: 'BrandProfile' }, // Legacy - removed unique constraint
   jobId: { type: String },
   brand_name: { type: String },
   domain: { type: String },

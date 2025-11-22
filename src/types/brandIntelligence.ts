@@ -98,6 +98,20 @@ export interface BrandIntelligenceDetailView extends BrandIntelligenceView {
   // Python v2 profile data
   profileData?: any;             // Raw profile data from brand_profiles collection
 
+  // Social profiles
+  socialProfiles?: {
+    profiles: Array<{
+      platform: string;
+      handle?: string | null;
+      url?: string | null;
+      status: string;          // found, not_found, manual, reanalysis
+      followers_count?: number;
+    }>;
+    platforms_found: string[];
+    total_found: number;
+    total_platforms: number;
+  } | null;
+
   // Data quality information
   dataQuality: {
     totalFields: number;

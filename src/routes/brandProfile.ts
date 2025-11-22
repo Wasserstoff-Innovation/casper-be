@@ -29,6 +29,14 @@ router.get('/profiles/:id/summary', authenticateUser, BrandProfileController.get
 // GET /profiles/:id/detail - Get full detail view for deep dive
 router.get('/profiles/:id/detail', authenticateUser, BrandProfileController.getDetailView);
 
+// NEW: Update profile and brand kit fields
+// PATCH /profiles/:id - Update brand profile fields (name, logo_url, colors, etc.)
+router.patch('/profiles/:id', authenticateUser, BrandProfileController.updateProfile);
+// PATCH /profiles/:id/brand-kit - Update brand kit fields (visual_identity, verbal_identity, etc.)
+router.patch('/profiles/:id/brand-kit', authenticateUser, BrandProfileController.updateBrandKit);
+// PATCH /profiles/:id/social/:platform - Update social profile for a platform
+router.patch('/profiles/:id/social/:platform', authenticateUser, BrandProfileController.updateSocialProfile);
+
 // NEW: Roadmap Task Management
 // PATCH /roadmap/tasks/bulk - Bulk update multiple tasks
 router.patch('/roadmap/tasks/bulk', authenticateUser, BrandProfileController.bulkUpdateTasks);

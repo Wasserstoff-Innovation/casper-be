@@ -630,5 +630,169 @@ static async mergeModuleResults(profileId: number, module: string, moduleData: a
     throw error;
   }
 }
+
+// Update brand profile fields
+static async updateProfile(profileId: string, userId: number, updates: any) {
+  const profile = await BrandProfile.findById(profileId);
+
+  if (!profile) {
+    throw new Error('Brand profile not found');
+  }
+
+  // Check ownership
+  if (profile.userId?.toString() !== userId.toString()) {
+    throw new Error('Unauthorized: Profile does not belong to this user');
+  }
+
+  // Allowed fields to update in brand_profiles
+  const allowedFields = [
+    'name', 'logo_url', 'favicon_url', 'primary_colors', 'heading_font', 'body_font',
+    'elevator_pitch_one_liner', 'value_proposition', 'brand_story', 'tone_voice',
+    'target_customer_profile', 'the_problem_it_solves', 'the_transformation_outcome'
+  ];
+
+  const updateData: any = {};
+  for (const field of allowedFields) {
+    if (updates[field] !== undefined) {
+      updateData[field] = updates[field];
+    }
+  }
+
+  if (Object.keys(updateData).length === 0) {
+    throw new Error('No valid fields to update');
+  }
+
+  const updated = await BrandProfile.findByIdAndUpdate(
+    profileId,
+    { $set: updateData },
+    { new: true }
+  );
+
+  return {
+    success: true,
+    updated: Object.keys(updateData),
+    profile: updated
+  };
+}
+
+// Update brand kit fields
+static async updateBrandKit(profileId: string, userId: number, updates: any) {
+  const profile = await BrandProfile.findById(profileId);
+
+  if (!profile) {
+    throw new Error('Brand profile not found');
+  }
+
+  // Check ownership
+  if (profile.userId?.toString() !== userId.toString()) {
+    throw new Error('Unauthorized: Profile does not belong to this user');
+  }
+
+  // Find or create brand kit
+  let brandKit = await BrandKit.findOne({ profileId: profileId });
+
+  if (!brandKit) {
+    throw new Error('Brand kit not found');
+  }
+
+  // Update nested fields (visual_identity, verbal_identity, etc.)
+  const updateData: any = {};
+
+  // Handle nested updates like visual_identity.logo_url
+  for (const key of Object.keys(updates)) {
+    if (['visual_identity', 'verbal_identity', 'proof_trust', 'seo', 'content', 'conversion', 'product'].includes(key)) {
+      // Merge with existing data
+      updateData[key] = { ...(brandKit as any)[key], ...updates[key] };
+    } else {
+      updateData[key] = updates[key];
+    }
+  }
+
+  const updated = await BrandKit.findOneAndUpdate(
+    { profileId: profileId },
+    { $set: updateData },
+    { new: true }
+  );
+
+  return {
+    success: true,
+    updated: Object.keys(updateData),
+    brandKit: updated
+  };
+}
+
+// Update social profile for a platform
+static async updateSocialProfile(profileId: string, userId: number, platform: string, updates: any) {
+  const profile = await BrandProfile.findById(profileId);
+
+  if (!profile) {
+    throw new Error('Brand profile not found');
+  }
+
+  // Check ownership
+  if (profile.userId?.toString() !== userId.toString()) {
+    throw new Error('Unauthorized: Profile does not belong to this user');
+  }
+
+  // Find social profiles document
+  const socialProfiles = await BrandSocialProfile.findOne({ brandProfileId: profileId });
+
+  if (!socialProfiles || !socialProfiles.profiles) {
+    throw new Error('Social profiles not found');
+  }
+
+  // Find and update the specific platform
+  const platformIndex = socialProfiles.profiles.findIndex(
+    (p: any) => p.platform.toLowerCase() === platform.toLowerCase()
+  );
+
+  if (platformIndex === -1) {
+    throw new Error(`Platform ${platform} not found in social profiles`);
+  }
+
+  // Update the platform's data
+  const updatePath = `profiles.${platformIndex}`;
+  const updateData: any = {};
+
+  if (updates.handle !== undefined) updateData[`${updatePath}.handle`] = updates.handle;
+  if (updates.url !== undefined) updateData[`${updatePath}.url`] = updates.url;
+  if (updates.status !== undefined) updateData[`${updatePath}.status`] = updates.status;
+  if (updates.followers_count !== undefined) updateData[`${updatePath}.followers_count`] = updates.followers_count;
+
+  // If user is filling in data, set status to 'manual'
+  if (updates.handle || updates.url) {
+    updateData[`${updatePath}.status`] = updates.status || 'manual';
+  }
+
+  // Update platforms_found if status changed to found/manual
+  const updated = await BrandSocialProfile.findOneAndUpdate(
+    { brandProfileId: profileId },
+    { $set: updateData },
+    { new: true }
+  );
+
+  // Recalculate total_found
+  const foundCount = updated?.profiles?.filter((p: any) =>
+    p.status === 'found' || p.status === 'manual'
+  ).length || 0;
+
+  await BrandSocialProfile.findOneAndUpdate(
+    { brandProfileId: profileId },
+    {
+      $set: {
+        total_found: foundCount,
+        platforms_found: updated?.profiles
+          ?.filter((p: any) => p.status === 'found' || p.status === 'manual')
+          .map((p: any) => p.platform.toLowerCase()) || []
+      }
+    }
+  );
+
+  return {
+    success: true,
+    platform: platform,
+    updated: Object.keys(updates)
+  };
+}
 }
   

@@ -4,7 +4,7 @@
  * Builds view models for frontend consumption from database data
  */
 
-import { BrandProfile, BrandRoadmapCampaign, BrandRoadmapTask, BrandKit } from '../models';
+import { BrandProfile, BrandRoadmapCampaign, BrandRoadmapTask, BrandKit, BrandSocialProfile } from '../models';
 import { Types } from 'mongoose';
 import { toObjectId } from '../utils/mongoHelpers';
 import {
@@ -39,7 +39,13 @@ export class BrandIntelligenceService {
     }
 
     // Fetch brand kit from separate collection
-    const brandKitDoc = await BrandKit.findOne({ profileId: profileId });
+    // Check both profileId (string, Python) and brandProfileId (ObjectId, legacy)
+    const brandKitDoc = await BrandKit.findOne({
+      $or: [
+        { profileId: profileId },
+        { brandProfileId: toObjectId(profileId) }
+      ]
+    });
 
     console.log('Profile data:', {
       name: profile.name,
@@ -94,7 +100,16 @@ export class BrandIntelligenceService {
     }
 
     // Fetch brand kit from separate collection
-    const brandKitDoc = await BrandKit.findOne({ profileId: profileId });
+    // Check both profileId (string, Python) and brandProfileId (ObjectId, legacy)
+    const brandKitDoc = await BrandKit.findOne({
+      $or: [
+        { profileId: profileId },
+        { brandProfileId: toObjectId(profileId) }
+      ]
+    });
+
+    // Fetch social profiles document
+    const socialProfilesDoc: any = await BrandSocialProfile.findOne({ brandProfileId: profileId }).lean();
 
     // Python v2 structure - return raw data
     const brandKitData = brandKitDoc ? {
@@ -134,6 +149,12 @@ export class BrandIntelligenceService {
       ...summaryView,
       brandKitUnwrapped: brandKitData,
       profileData: profileData,
+      socialProfiles: socialProfilesDoc ? {
+        profiles: socialProfilesDoc.profiles || [],
+        platforms_found: socialProfilesDoc.platforms_found || [],
+        total_found: socialProfilesDoc.total_found || 0,
+        total_platforms: socialProfilesDoc.total_platforms || 0
+      } : null,
       dataQuality: {
         totalFields: 0,
         foundFields: 0,
