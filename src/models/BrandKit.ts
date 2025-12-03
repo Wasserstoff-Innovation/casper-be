@@ -1,83 +1,81 @@
 import { Schema, model, Document, Types } from 'mongoose';
+import type {
+  ComprehensiveBrandKit,
+  DataQualityMetrics,
+  SlideConfig
+} from '../types/brand.types';
+
+/**
+ * BRAND KIT MODEL
+ *
+ * Mongoose schema for brand_kits collection.
+ * All type definitions are in src/types/brand.types.ts (single source of truth).
+ */
 
 export interface IBrandKit extends Document {
-  userId?: Types.ObjectId;
-  profileId?: string; // Python stores as string
-  brandProfileId?: Types.ObjectId;
+  userId?: Types.ObjectId | string;
+  profileId?: string;
+  brandProfileId?: Types.ObjectId | string;
   jobId?: string;
   brand_name?: string;
   domain?: string;
 
-  // Python v2 flat structure
-  visual_identity?: {
-    colors?: {
-      primary?: string[];
-      secondary?: string[];
-      neutrals?: string[];
-    };
-    typography?: {
-      heading?: string;
-      body?: string;
-      mono?: string | null;
-    };
-    logo_url?: string | null;
-    favicon_url?: string | null;
-    style_tags?: string[];
-    consistency_score?: number;
-  };
-  verbal_identity?: {
-    tagline?: string | null;
-    elevator_pitch?: string;
-    value_proposition?: string;
-    brand_story?: string | null;
-    tone_voice?: string[];
-    personality_traits?: string[];
-  };
-  proof_trust?: {
-    testimonials_count?: number;
-    case_studies_count?: number;
-    client_logos_count?: number;
-    reviews_count?: number;
-    awards_count?: number;
-  };
-  seo?: {
-    primary_keywords?: string[];
-    secondary_keywords?: string[];
-    technical_score?: number;
-  };
-  content?: {
-    has_blog?: boolean;
-    blog_url?: string | null;
-    post_count?: number;
-  };
-  conversion?: {
-    primary_cta_text?: string;
-    has_pricing_page?: boolean;
-    free_trial?: boolean;
-  };
-  product?: {
-    products_count?: number;
-    plans_count?: number;
-    key_features_count?: number;
-  };
-  generated_at?: Date;
+  // Main data - single source of truth
+  comprehensive?: ComprehensiveBrandKit;
 
-  // Legacy field
+  // Data quality metrics
+  data_quality?: DataQualityMetrics;
+
+  // Visual kit UI config
+  visual_kit_config?: {
+    slides?: SlideConfig[];
+    settings?: {
+      aspectRatio?: '16:9' | '4:3' | '1:1' | 'A4';
+      exportFormat?: 'pdf' | 'png' | 'pptx';
+      includePageNumbers?: boolean;
+      watermark?: string;
+    };
+    lastEditedAt?: Date;
+  };
+
+  // ==========================================
+  // DEPRECATED FIELDS (for backward compatibility)
+  // These are kept for service migration period
+  // DO NOT USE - will be removed in next version
+  // ==========================================
+  /** @deprecated Use 'comprehensive' instead */
   kitData?: any;
+  // ==========================================
+  // END DEPRECATED FIELDS
+  // ==========================================
 
+  // Legacy flat structure (deprecated)
+  visual_identity?: any;
+  verbal_identity?: any;
+  proof_trust?: any;
+  seo?: any;
+  content?: any;
+  conversion?: any;
+  product?: any;
+
+  generated_at?: Date;
   created_at: Date;
   updated_at: Date;
 }
 
 const BrandKitSchema = new Schema<IBrandKit>({
-  userId: { type: Schema.Types.ObjectId, ref: 'User' },
-  profileId: { type: String, unique: true }, // Python stores as string - this is the primary lookup
-  brandProfileId: { type: Schema.Types.ObjectId, ref: 'BrandProfile' }, // Legacy - removed unique constraint
+  userId: { type: Schema.Types.Mixed },
+  profileId: { type: String, unique: true, sparse: true },
+  brandProfileId: { type: Schema.Types.Mixed },
   jobId: { type: String },
   brand_name: { type: String },
   domain: { type: String },
 
-  // Python v2 flat structure
+  comprehensive: { type: Schema.Types.Mixed },
+  data_quality: { type: Schema.Types.Mixed },
+  visual_kit_config: { type: Schema.Types.Mixed },
+
+  // Legacy
   visual_identity: { type: Schema.Types.Mixed },
   verbal_identity: { type: Schema.Types.Mixed },
   proof_trust: { type: Schema.Types.Mixed },
@@ -87,9 +85,6 @@ const BrandKitSchema = new Schema<IBrandKit>({
   product: { type: Schema.Types.Mixed },
   generated_at: { type: Date },
 
-  // Legacy field
-  kitData: { type: Schema.Types.Mixed },
-
   created_at: { type: Date, default: Date.now },
   updated_at: { type: Date, default: Date.now }
 }, {
@@ -97,12 +92,11 @@ const BrandKitSchema = new Schema<IBrandKit>({
   collection: 'brand_kits'
 });
 
-// Indexes
 BrandKitSchema.index({ userId: 1 });
 BrandKitSchema.index({ profileId: 1 });
-// Note: brandProfileId unique index is already created by 'unique: true' in schema definition
+BrandKitSchema.index({ brandProfileId: 1 });
+BrandKitSchema.index({ domain: 1 });
 
-// Update updated_at on save
 BrandKitSchema.pre('save', function(next) {
   this.updated_at = new Date();
   next();

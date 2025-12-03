@@ -6,6 +6,7 @@ import {
   createMissingArrayField,
   BrandKitField,
   BrandKitArrayField,
+  LogoVariantInfo,
 } from '../types/brandKit';
 
 /**
@@ -68,7 +69,7 @@ export class ManualBrandKitBuilder {
             ['manual'],
             1.0
           ),
-          logo_variations: createMissingArrayField<{ type: string; url: string }>('Logo variations', ['responsive_design']),
+          logo_variations: createMissingArrayField<LogoVariantInfo>('Logo variations', ['responsive_design']),
           favicon_url: createMissingField('Browser favicon', ['web_presence']),
         },
         color_system: {

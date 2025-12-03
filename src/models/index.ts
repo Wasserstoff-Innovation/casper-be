@@ -1,7 +1,30 @@
-// Export all Mongoose models
+/**
+ * MODEL EXPORTS
+ *
+ * This file exports Mongoose models and their document interfaces.
+ *
+ * IMPORTANT: For type definitions (ColorInfo, FieldValue, ComprehensiveBrandKit, etc.),
+ * import from 'src/types/brand.types.ts' - the single source of truth.
+ */
+
+// ============================================================================
+// User
+// ============================================================================
 export { User, IUser } from './User';
+
+// ============================================================================
+// Brand Profile (summary data for list views)
+// ============================================================================
 export { BrandProfile, IBrandProfile } from './BrandProfile';
+
+// ============================================================================
+// Brand Kit (detailed brand data)
+// ============================================================================
 export { BrandKit, IBrandKit } from './BrandKit';
+
+// ============================================================================
+// Brand Roadmap
+// ============================================================================
 export {
   BrandRoadmapCampaign,
   BrandRoadmapMilestone,
@@ -10,8 +33,49 @@ export {
   IBrandRoadmapMilestone,
   IBrandRoadmapTask
 } from './BrandRoadmap';
-export { BrandSocialProfile, IBrandSocialProfile } from './BrandSocialProfile';
+
+// ============================================================================
+// Brand Social Profile
+// ============================================================================
+export {
+  BrandSocialProfile,
+  IBrandSocialProfile,
+  ISocialProfileItem,
+  SocialProfileStatus
+} from './BrandSocialProfile';
+
+// ============================================================================
+// Brand Intelligence Job (job tracking + computed fields)
+// ============================================================================
+export {
+  BrandIntelligenceJob,
+  IBrandIntelligenceJob,
+  JobStatus,
+  PhaseStatus,
+  // Re-exported type aliases for backwards compatibility
+  // (source of truth is types/brand.types.ts)
+  IStrengthRisk,
+  ICriticalGap,
+  ISnapshot,
+  IDataQuality,
+  IChannel,
+  IProgress,
+  // Model-specific types
+  IScores,
+  IBrandInfo,
+  IRoadmapSummary,
+  IContext,
+  IResult
+} from './BrandIntelligenceJob';
+
+// ============================================================================
+// Visited User
+// ============================================================================
 export { VisitedUser, IVisitedUser } from './VisitedUser';
+
+// ============================================================================
+// Image Generation
+// ============================================================================
 export {
   ImageGenerationJob,
   CarouselGeneration,
@@ -30,4 +94,8 @@ export {
   IPhotographyGeneration,
   IPrintAdGeneration
 } from './ImageGeneration';
+
+// ============================================================================
+// Campaign
+// ============================================================================
 export { CampaignPlan, ContentCalendar, ICampaignPlan, IContentCalendar } from './Campaign';

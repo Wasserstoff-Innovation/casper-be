@@ -7,6 +7,8 @@ import {
   createMissingArrayField,
   calculateSectionCompleteness,
   GapInfo,
+  LogoVariantInfo,
+  GradientInfo,
 } from '../types/brandKit';
 
 /**
@@ -34,6 +36,7 @@ export class BrandKitTransformer {
       external_presence: this.buildExternalPresence(brand_kit),
       content_assets: this.buildContentAssets(brand_kit),
       competitor_analysis: this.buildCompetitorAnalysis({ ...brand_kit, competitor_analysis }),
+      contact_info: this.buildContactInfo(brand_kit, domain),
       gaps_summary: {} as any, // Will be populated after
     };
 
@@ -134,28 +137,69 @@ export class BrandKitTransformer {
 
   private static buildVisualIdentity(brand_kit: any) {
     const visual = brand_kit.visual_identity || {};
+    const primaryLogoUrl = visual.logo_url || brand_kit.logos?.primary_url || '';
     
     return {
       logos: {
-        primary_logo_url: visual.logo_url || brand_kit.logos?.primary_url
+        primary_logo_url: primaryLogoUrl
           ? createFoundField(
-              visual.logo_url || brand_kit.logos?.primary_url,
+              primaryLogoUrl,
               'Main brand logo',
               ['header', 'footer', 'marketing'],
               [brand_kit.domain],
               1.0
             )
-          : createMissingField('Main brand logo', ['header', 'footer', 'marketing'], 'No logo URL extracted'),
+          : createMissingField(
+              'Main brand logo',
+              ['header', 'footer', 'marketing'],
+              'No logo URL extracted'
+            ),
+        // NEW: logo for light backgrounds (fallback to primary logo)
+        logo_on_light: primaryLogoUrl
+          ? createInferredField(
+              primaryLogoUrl,
+              'Logo for light backgrounds',
+              ['slides', 'presentations'],
+              0.6,
+              'Using primary logo as fallback for light backgrounds'
+            )
+          : createMissingField(
+              'Logo for light backgrounds',
+              ['slides', 'presentations']
+            ),
+        // NEW: logo for dark backgrounds (fallback to primary logo)
+        logo_on_dark: primaryLogoUrl
+          ? createInferredField(
+              primaryLogoUrl,
+              'Logo for dark backgrounds',
+              ['slides', 'presentations'],
+              0.6,
+              'Using primary logo as fallback for dark backgrounds'
+            )
+          : createMissingField(
+              'Logo for dark backgrounds',
+              ['slides', 'presentations']
+            ),
         logo_variations: brand_kit.logos?.variations && brand_kit.logos.variations.length > 0
-          ? createFoundArrayField<{ type: string; url: string }>(
-              brand_kit.logos.variations,
+          ? createFoundArrayField<LogoVariantInfo>(
+              brand_kit.logos.variations.map((v: any) => ({
+                type: (v.type as LogoVariantInfo['type']) || 'primary',
+                url: v.url,
+                format: v.format,
+                aspectRatio: v.aspectRatio,
+                minSize: v.minSize,
+                clearSpace: v.clearSpace,
+              })),
               'Logo variations (dark/light, icon)',
               ['responsive_design', 'social_media'],
               [brand_kit.domain],
               0.9,
               'Extracted from HTML and screenshots'
             )
-          : createMissingArrayField<{ type: string; url: string }>('Logo variations (dark/light, icon)', ['responsive_design', 'social_media']),
+          : createMissingArrayField<LogoVariantInfo>(
+              'Logo variations (dark/light, icon)',
+              ['responsive_design', 'social_media']
+            ),
         favicon_url: brand_kit.logos?.favicon_url
           ? createFoundField(
               brand_kit.logos.favicon_url,
@@ -166,6 +210,22 @@ export class BrandKitTransformer {
               'Extracted from HTML link tags'
             )
           : createMissingField('Browser favicon', ['web_presence', 'bookmarks']),
+        // NEW: logo rules
+        logo_rules: createInferredField(
+          {
+            clearSpaceMultiplier: 1.5,
+            minDisplaySize: '80px',
+            prohibitedUsage: [
+              'Do not rotate or skew',
+              'Do not change logo colors arbitrarily',
+              'Do not place the logo on busy backgrounds',
+            ],
+          },
+          'Logo usage rules',
+          ['brand_guidelines', 'slides'],
+          0.6,
+          'Standard logo guidelines; customize as needed'
+        ),
       },
       color_system: {
         primary_colors: visual.primary_colors && visual.primary_colors.length > 0
@@ -195,8 +255,48 @@ export class BrandKitTransformer {
               0.8
             )
           : createMissingArrayField<any>('Secondary brand colors', ['design_system']),
-        accent_colors: createMissingArrayField<any>('Accent colors for highlights', ['design_system']),
-        neutrals: createMissingArrayField<any>('Neutral colors (grays, whites)', ['design_system', 'backgrounds']),
+        accent_colors: createMissingArrayField<any>(
+          'Accent colors for highlights',
+          ['design_system']
+        ),
+        neutrals: createMissingArrayField<any>(
+          'Neutral colors (grays, whites)',
+          ['design_system', 'backgrounds']
+        ),
+        // NEW: text colors for light/dark backgrounds
+        text_colors: createInferredField(
+          {
+            on_light: [
+              { hex: '#1E293B', name: 'Primary Text', role: 'text', usage: ['headings', 'body'] },
+              { hex: '#64748B', name: 'Secondary Text', role: 'text', usage: ['muted'] },
+            ],
+            on_dark: [
+              { hex: '#F9FAFB', name: 'Primary Text (Dark)', role: 'text', usage: ['headings', 'body'] },
+              { hex: '#E5E7EB', name: 'Secondary Text (Dark)', role: 'text', usage: ['muted'] },
+            ],
+          },
+          'Text colors on light and dark backgrounds',
+          ['typography', 'accessibility'],
+          0.7,
+          'Standard defaults; override from brand guidelines if available'
+        ),
+        // NEW: background colors
+        backgrounds: createInferredField(
+          {
+            light: '#FFFFFF',
+            dark: '#0F172A',
+            surface: '#F8FAFC',
+          },
+          'Background colors for layouts and cards',
+          ['layouts', 'cards'],
+          0.7,
+          'Standard defaults; override from brand if available'
+        ),
+        // NEW: gradients
+        gradients: createMissingArrayField<GradientInfo>(
+          'Brand gradients',
+          ['backgrounds', 'effects']
+        ),
       },
       typography: {
         heading_font: visual.primary_font
@@ -217,7 +317,28 @@ export class BrandKitTransformer {
               0.8
             )
           : createMissingField('Font used for body text', ['design_system']),
-        mono_font: createMissingField('Monospace font for code', ['documentation', 'technical_content']),
+        mono_font: createMissingField(
+          'Monospace font for code',
+          ['documentation', 'technical_content']
+        ),
+        // NEW: accent font (display)
+        accent_font: createMissingField(
+          'Display/accent font',
+          ['headlines', 'campaigns']
+        ),
+        // NEW: typography scale
+        scale: createInferredField(
+          {
+            baseSize: 16,
+            scaleRatio: 1.25,
+            lineHeight: { heading: 1.2, body: 1.6 },
+            letterSpacing: { heading: '-0.02em', body: '0', caps: '0.08em' },
+          },
+          'Typography scale settings',
+          ['design_system'],
+          0.7,
+          'Standard Major Third scale; adjust manually if needed'
+        ),
       },
       components: {
         button_style: visual.button_style
@@ -230,10 +351,36 @@ export class BrandKitTransformer {
               'Inferred from visual analysis'
             )
           : createMissingField('CTA button styling', ['design_system', 'conversion']),
-        card_style: createMissingField('Card component styling', ['design_system', 'ui_patterns']),
+        card_style: createMissingField(
+          'Card component styling',
+          ['design_system', 'ui_patterns']
+        ),
+        // NEW: dark card style
+        card_dark_style: createInferredField(
+          {
+            borderRadius: '12px',
+            shadow: '0 4px 6px -1px rgba(15, 23, 42, 0.4)',
+            border: '1px solid rgba(148, 163, 184, 0.5)',
+            padding: '24px',
+            background: '#0F172A',
+          },
+          'Card styling on dark backgrounds',
+          ['cards', 'dark_mode'],
+          0.6,
+          'Standard dark card style; customize manually'
+        ),
         spacing_vibe: visual.design_style && visual.design_style.includes('minimal')
-          ? createInferredField('airy', 'Overall spacing approach', ['design_system'], 0.6, 'Inferred from "minimal" style')
-          : createMissingField('Overall spacing approach', ['design_system']),
+          ? createInferredField(
+              'airy',
+              'Overall spacing approach',
+              ['design_system'],
+              0.6,
+              'Inferred from "minimal" style'
+            )
+          : createMissingField(
+              'Overall spacing approach',
+              ['design_system']
+            ),
         layout_tags: visual.layout_patterns
           ? createFoundArrayField<string>(
               visual.layout_patterns,
@@ -242,7 +389,28 @@ export class BrandKitTransformer {
               [brand_kit.domain],
               0.7
             )
-          : createMissingArrayField<string>('Common layout patterns', ['design_system']),
+          : createMissingArrayField<string>(
+              'Common layout patterns',
+              ['design_system']
+            ),
+        // NEW: secondary button style (outline)
+        button_secondary_style: createMissingField(
+          'Secondary/outline button style',
+          ['design_system', 'secondary_cta']
+        ),
+        // NEW: input style
+        input_style: createInferredField(
+          {
+            borderRadius: '8px',
+            border: '1px solid #E2E8F0',
+            focusRing: '0 0 0 3px rgba(59,130,246,0.4)',
+            background: '#FFFFFF',
+          },
+          'Input field styling',
+          ['forms'],
+          0.6,
+          'Standard input style; customize from brand if needed'
+        ),
       },
       imagery: {
         style_type: visual.imagery_style
@@ -254,8 +422,25 @@ export class BrandKitTransformer {
               0.8
             )
           : createMissingField('Visual content style', ['brand_guidelines']),
-        illustration_style: createMissingField('Illustration art style', ['brand_guidelines', 'marketing']),
-        icon_style: createMissingField('Icon design style', ['design_system', 'ui']),
+        illustration_style: createMissingField(
+          'Illustration art style',
+          ['brand_guidelines', 'marketing']
+        ),
+        icon_style: createMissingField(
+          'Icon design style',
+          ['design_system', 'ui']
+        ),
+        // NEW: sample images
+        sample_images: createMissingArrayField<string>(
+          'Representative brand imagery',
+          ['brand_guidelines', 'moodboard']
+        ),
+        // NEW: style description
+        style_description: createMissingField(
+          'Imagery style description',
+          ['brand_guidelines'],
+          'Describe photography / illustration look & feel here'
+        ),
       },
     };
   }
@@ -330,11 +515,24 @@ export class BrandKitTransformer {
             [brand_kit.domain],
             0.8
           )
-          : createMissingArrayField<string>('Repeated phrases', ['messaging']),
+          : createMissingArrayField<string>(
+              'Repeated phrases',
+              ['messaging']
+            ),
       words_to_avoid: createMissingArrayField<string>(
         'Terms to avoid in brand communications',
         ['brand_guidelines', 'content_creation'],
         'Would need competitor analysis or explicit guidelines'
+      ),
+      // NEW: brand vocabulary words
+      brand_words: createMissingArrayField<string>(
+        'Core brand vocabulary words',
+        ['brand_guidelines', 'copywriting']
+      ),
+      // NEW: messaging pillars
+      messaging_pillars: createMissingArrayField<string>(
+        'Messaging pillars/themes',
+        ['content_strategy', 'positioning']
       ),
     };
   }
@@ -798,6 +996,74 @@ export class BrandKitTransformer {
             )
           : createMissingArrayField<any>('Competitor weaknesses', ['competitive_analysis']),
       },
+    };
+  }
+
+  private static buildContactInfo(brand_kit: any, domain: string) {
+    const contact = brand_kit.contact || {};
+
+    return {
+      company_name: createFoundField(
+        brand_kit.brand_name || 'Unknown Brand',
+        'Company name',
+        ['contact', 'footer'],
+        [domain],
+        brand_kit.brand_name ? 1.0 : 0.5
+      ),
+      website: createFoundField(
+        `https://${domain}`,
+        'Website URL',
+        ['contact', 'footer'],
+        [domain],
+        1.0
+      ),
+      email: contact.email
+        ? createFoundField(
+            contact.email,
+            'Primary contact email',
+            ['contact'],
+            [domain],
+            0.9
+          )
+        : createMissingField(
+            'Primary contact email',
+            ['contact']
+          ),
+      phone: contact.phone
+        ? createFoundField(
+            contact.phone,
+            'Primary contact phone',
+            ['contact'],
+            [domain],
+            0.8
+          )
+        : createMissingField(
+            'Primary contact phone',
+            ['contact']
+          ),
+      address: contact.address
+        ? createFoundField(
+            contact.address,
+            'Company address',
+            ['contact'],
+            [domain],
+            0.8
+          )
+        : createMissingField(
+            'Company address',
+            ['contact']
+          ),
+      social_links: createMissingArrayField<{ platform: string; url: string; handle: string }>(
+        'Social links for contact slide',
+        ['contact', 'footer']
+      ),
+      footer_text: createInferredField(
+        `© ${new Date().getFullYear()} ${brand_kit.brand_name || 'Brand'}`,
+        'Footer text',
+        ['footer'],
+        0.9,
+        'Standard copyright footer'
+      ),
     };
   }
 

@@ -14,6 +14,7 @@ export interface StrengthRisk {
   label: string;         // human-readable (e.g., 'Visual Clarity')
   value: number;         // 0-100 score
   status?: string;       // 'scored' | 'not_applicable' | 'insufficient_data'
+  description?: string;  // e.g., 'Strong visual identity (75/100)'
 }
 
 export interface ChannelStatus {
@@ -28,7 +29,7 @@ export interface UICriticalGap {
   fieldId: string;       // 'verbal_identity.tagline'
   fieldLabel: string;    // 'Tagline'
   sectionLabel: string;  // 'Verbal Identity'
-  severity: 'critical' | 'important';
+  severity: 'critical' | 'important' | 'high' | 'medium' | 'low';
   recommendation: string;
   relatedCampaignId?: string; // Optional link to campaign that addresses this
 }
@@ -43,6 +44,8 @@ export interface BrandProfileListItem {
   brandName: string | null;
   logo: string | null;      // primary logo URL
   personaId: string | null;
+  completeness?: number;    // 0-100 percentage
+  overallScore?: number;    // 0-100 score
 }
 
 // ============================================================================
@@ -71,7 +74,10 @@ export interface BrandIntelligenceView {
     fieldsFound: number;
     fieldsInferred: number;
     fieldsMissing: number;
+    fieldsManual: number;
+    totalFields: number;
     totalCriticalGaps: number;
+    overallCompleteness: number;  // 0-100
     sectionCompleteness: Record<string, number>; // 'meta' -> 67, 'visual_identity' -> 45
     evidenceSummary: {
       sitePages: number;
@@ -104,12 +110,16 @@ export interface BrandIntelligenceDetailView extends BrandIntelligenceView {
       platform: string;
       handle?: string | null;
       url?: string | null;
-      status: string;          // found, not_found, manual, reanalysis
+      status: string;          // found, not_found, manual, reanalysis, verified
       followers_count?: number;
+      verified?: boolean;
+      bio?: string | null;
+      engagement_rate?: number;
     }>;
     platforms_found: string[];
     total_found: number;
     total_platforms: number;
+    total_followers?: number;
   } | null;
 
   // Data quality information
@@ -118,9 +128,12 @@ export interface BrandIntelligenceDetailView extends BrandIntelligenceView {
     foundFields: number;
     inferredFields: number;
     missingFields: number;
+    manualFields: number;
     averageConfidence: number;   // 0.0 - 1.0
+    completenessPercentage: number;
     sourceBreakdown: Record<string, number>;  // {"homepage": 15, "about_page": 8, ...}
     lowConfidenceFields: Array<{ field: string; confidence: number }>;
+    by_section?: Record<string, SectionCompletenessDetail>;
   };
 
   // Raw comprehensive data (for debugging or advanced use)
@@ -136,7 +149,7 @@ export interface BrandIntelligenceDetailView extends BrandIntelligenceView {
 export interface BrandScoresView {
   overall: number | null;  // 0-100
   dimensions: {
-    [dimensionId: string]: {
+    [dimensionId: string]: number | null | {
       value: number | null;
       status: 'scored' | 'not_applicable' | 'insufficient_data';
       label: string;  // Human-readable dimension name
@@ -204,7 +217,9 @@ export interface RoadmapSummaryView {
   quickWins: RoadmapTaskSummary[];  // 3-10 tasks
   campaigns: RoadmapCampaignSummary[];
   totalTasks: number;
-  estimatedTimeline: string;  // e.g., "2-3 weeks"
+  completedTasks: number;
+  completionPercentage: number;
+  estimatedTimeline: string;  // e.g., "5 quick wins, 10 projects"
 }
 
 export interface RoadmapTaskSummary {
@@ -215,6 +230,7 @@ export interface RoadmapTaskSummary {
   impact: string;
   effort: string;
   status: string;
+  priority?: number;
   acceptanceCriteria?: string;
 }
 
@@ -227,6 +243,11 @@ export interface RoadmapCampaignSummary {
   completionPercentage: number;  // based on tasks in DB
   totalTasks: number;
   completedTasks: number;
+  priority?: number;
+  description?: string;
+  impact?: string;
+  effort?: string;
+  status?: string;
 }
 
 // ============================================================================
@@ -240,8 +261,9 @@ export interface SectionCompletenessDetail {
   foundCount: number;
   inferredCount: number;
   missingCount: number;
-  notApplicableCount: number;
-  criticalGaps: UICriticalGap[];
+  manualCount: number;
+  notApplicableCount?: number;
+  criticalGaps?: UICriticalGap[];
 }
 
 // ============================================================================
@@ -252,7 +274,7 @@ export const DIMENSION_LABELS: Record<string, string> = {
   'visual_clarity': 'Visual Clarity',
   'verbal_clarity': 'Verbal Clarity',
   'positioning': 'Positioning',
-  'presence': 'Presence',
+  'presence': 'Online Presence',
   'conversion_trust': 'Conversion & Trust',
   'strategic_foundation': 'Strategic Foundation',
   'overall': 'Overall',
@@ -269,6 +291,7 @@ export const SECTION_LABELS: Record<string, string> = {
   'external_presence': 'External Presence',
   'content_assets': 'Content Assets',
   'competitor_analysis': 'Competitor Analysis',
+  'contact_info': 'Contact Info',
   'gaps_summary': 'Gaps Summary',
 };
 
@@ -304,4 +327,181 @@ export interface BrandProfileRow {
 
   created_at: Date | null;
   updated_at: Date | null;
+}
+
+// ============================================================================
+// Job Status / Enhanced Progress Tracking
+// ============================================================================
+
+export type JobStatus = 'queued' | 'running' | 'complete' | 'failed';
+export type PhaseStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
+
+export interface SubProgressInfo {
+  current: number;           // Current module index (1-based)
+  total: number;             // Total modules to run
+  current_name: string;      // Module id, e.g., "seo_content"
+  current_label?: string;    // Human label, e.g., "SEO & Content"
+  modules_completed: string[];
+  modules_pending: string[];
+}
+
+export interface EnhancedJobProgress {
+  progress_percentage: number;          // 0-100
+  current_phase: string;                // "modules_execution"
+  current_phase_label: string;          // "Running analysis modules"
+  phase_status: PhaseStatus;            // "in_progress", etc.
+  phase_details?: string;               // Free-text details
+
+  // Enhanced tracking from Python backend
+  current_step: number;                 // e.g., 7
+  total_steps: number;                  // e.g., 10
+  step_label: string;                   // "7/10"
+  current_task: string;                 // "Analyzing SEO & Content..."
+
+  sub_progress?: SubProgressInfo;
+  phase_started_at?: string;            // ISO timestamp
+  last_updated?: string;                // ISO timestamp
+}
+
+export interface JobStatusResponse {
+  job_id: string;
+  status: JobStatus;
+
+  // Progress fields (present when job is running/queued)
+  progress_percentage?: number;         // Legacy convenience field
+  current_phase?: string;
+  current_phase_label?: string;
+  phase_status?: PhaseStatus;
+  phase_details?: string;
+
+  // Enhanced progress structure (Python backend v2)
+  progress?: EnhancedJobProgress;
+
+  // Result (present when status === 'complete')
+  result?: {
+    profile_id: string;
+    brand_kit_id?: string;
+    social_profile_ids?: string[];
+    tasks_count?: number;
+    scores?: {
+      overall: number;
+      visual_clarity: number;
+      verbal_clarity: number;
+      positioning: number;
+      presence: number;
+      conversion_trust: number;
+    };
+    context?: {
+      persona: string;
+      entity_type: string;
+      url: string;
+    };
+    // Node.js additions when complete
+    brand_kit?: any;
+    brand_scores?: any;
+    brand_roadmap?: any;
+    analysis_context?: any;
+  };
+
+  // Error message (present when status === 'failed')
+  error?: string | null;
+}
+
+// ============================================================================
+// Brand Intelligence Job View (from brand_intelligence_jobs collection)
+// ============================================================================
+
+export interface BrandIntelligenceJobView {
+  id: string;
+  url: string;
+  status: JobStatus;
+  pipeline: string;
+
+  // Computed snapshot
+  snapshot?: {
+    strengths: string[];
+    risks: string[];
+    fieldsFound: number;
+    fieldsInferred: number;
+    fieldsMissing: number;
+    fieldsManual: number;
+    totalFields: number;
+    overallCompleteness: number;
+    sectionCompleteness: Record<string, number>;
+  };
+
+  // Critical gaps
+  criticalGaps?: Array<{
+    field: string;
+    fieldLabel: string;
+    section: string;
+    sectionLabel: string;
+    impact: 'critical' | 'high' | 'medium' | 'low';
+    recommendation: string;
+  }>;
+
+  // Data quality
+  dataQuality?: {
+    completeness: number;
+    accuracy: number;
+    freshness: number;
+    overallQuality: number;
+    averageConfidence: number;
+  };
+
+  // Scores
+  scores?: {
+    overall: number | null;
+    visual_clarity: number | null;
+    verbal_clarity: number | null;
+    positioning: number | null;
+    presence: number | null;
+    conversion_trust: number | null;
+  };
+
+  // Brand info
+  brand?: {
+    name: string | null;
+    domain: string;
+    url: string | null;
+    logo_url: string | null;
+  };
+
+  // Roadmap summary
+  roadmap?: {
+    quick_wins_count: number;
+    projects_count: number;
+    long_term_count: number;
+    total_count: number;
+    completed_count: number;
+    completion_percentage: number;
+  };
+
+  // Context
+  context?: {
+    persona: string | null;
+    persona_label: string | null;
+    entity_type: string | null;
+    business_model: string | null;
+    url: string;
+  };
+
+  // Channels
+  channels?: ChannelStatus[];
+
+  // References
+  profileId?: string;
+  brandKitId?: string;
+  socialProfileIds?: string[];
+
+  // Progress
+  progress?: EnhancedJobProgress;
+
+  // Timestamps
+  created_at: string;
+  completed_at?: string;
+  last_updated: string;
+
+  // Error
+  error?: string | null;
 }

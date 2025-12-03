@@ -1,12 +1,25 @@
 /**
  * Brand Intelligence Service
  *
- * Builds view models for frontend consumption from database data
+ * Builds view models for frontend consumption from database data.
+ * Uses the new schema structure with BrandIntelligenceJob for computed fields.
  */
 
-import { BrandProfile, BrandRoadmapCampaign, BrandRoadmapTask, BrandKit, BrandSocialProfile } from '../models';
-import { Types } from 'mongoose';
+import {
+  BrandProfile,
+  BrandRoadmapTask,
+  BrandKit,
+  BrandSocialProfile,
+  BrandIntelligenceJob
+} from '../models';
 import { toObjectId } from '../utils/mongoHelpers';
+import {
+  calculateDataQualityMetrics,
+  calculateLegacyCompleteness,
+  calculateProfileCompleteness,
+  buildStrengthsAndRisks,
+  buildCriticalGaps
+} from '../utils/completenessCalculator';
 import {
   BrandIntelligenceView,
   BrandIntelligenceDetailView,
@@ -15,16 +28,14 @@ import {
   ChannelsOverviewView,
   BrandKitSummaryView,
   RoadmapSummaryView,
-  StrengthRisk,
   UICriticalGap,
   ChannelStatus,
   RoadmapTaskSummary,
   RoadmapCampaignSummary,
-  DIMENSION_LABELS,
   SECTION_LABELS,
+  BrandIntelligenceJobView,
 } from '../types/brandIntelligence';
-import { FieldValueUnwrapper } from './fieldValueUnwrapper';
-import { getValue as getFieldValue, getItems as getFieldItems } from '../types/fieldValue';
+import { IStrengthRisk } from '../models/BrandIntelligenceJob';
 
 export class BrandIntelligenceService {
   /**
@@ -39,7 +50,6 @@ export class BrandIntelligenceService {
     }
 
     // Fetch brand kit from separate collection
-    // Check both profileId (string, Python) and brandProfileId (ObjectId, legacy)
     const brandKitDoc = await BrandKit.findOne({
       $or: [
         { profileId: profileId },
@@ -47,22 +57,38 @@ export class BrandIntelligenceService {
       ]
     });
 
-    console.log('Profile data:', {
-      name: profile.name,
-      domain: profile.domain,
-      persona: profile.persona,
-      hasScores: !!profile.scores,
-      scores: profile.scores
-    });
+    // Fetch social profiles
+    const socialProfileDoc = await BrandSocialProfile.findOne({ brandProfileId: profileId });
 
-    console.log('Brand kit doc:', {
-      found: !!brandKitDoc,
-      brand_name: brandKitDoc?.brand_name,
-      hasVisualIdentity: !!brandKitDoc?.visual_identity,
-      hasVerbalIdentity: !!brandKitDoc?.verbal_identity
-    });
+    // Calculate data quality metrics
+    const dataQuality = brandKitDoc?.comprehensive
+      ? calculateDataQualityMetrics(brandKitDoc.comprehensive)
+      : {
+          totalFields: 0,
+          foundFields: 0,
+          inferredFields: 0,
+          missingFields: 0,
+          manualFields: 0,
+          averageConfidence: 0,
+          completenessPercentage: calculateLegacyCompleteness(brandKitDoc),
+          editedFieldPaths: [],
+          by_section: {}
+        };
 
-    // Build view model from Python v2 structure
+    // Build strengths and risks from scores
+    const { strengths, risks } = buildStrengthsAndRisks(profile.scores);
+
+    // Build critical gaps
+    const criticalGapsRaw = buildCriticalGaps(brandKitDoc?.comprehensive || null, dataQuality);
+    const criticalGaps: UICriticalGap[] = criticalGapsRaw.map(g => ({
+      fieldId: g.field,
+      fieldLabel: g.fieldLabel,
+      sectionLabel: g.sectionLabel,
+      severity: g.impact,
+      recommendation: g.recommendation
+    }));
+
+    // Build view model
     return {
       id: profile._id.toString(),
       domain: profile.domain || 'unknown',
@@ -74,16 +100,46 @@ export class BrandIntelligenceService {
         entityType: profile.type || null,
         businessModel: profile.business_model || null,
         channelOrientation: null,
-        completenessScore: 0,
+        completenessScore: dataQuality.completenessPercentage,
         generatedAt: brandKitDoc?.generated_at?.toISOString() || profile.created_at?.toISOString() || '',
       },
 
-      snapshot: this.buildSnapshotV2(profile, brandKitDoc),
-      scores: this.buildScoresViewV2(profile.scores),
-      channels: this.buildChannelsViewV2(brandKitDoc),
-      brandKitSummary: this.buildBrandKitSummaryV2(brandKitDoc, profile),
-      criticalGaps: [],
-      roadmapSummary: this.buildRoadmapSummaryV2(profile.roadmap),
+      snapshot: {
+        overallScore: profile.scores?.overall || null,
+        strengths: strengths.map(s => ({
+          id: s.dimension,
+          label: s.label,
+          value: s.score,
+          description: s.description
+        })),
+        risks: risks.map(r => ({
+          id: r.dimension,
+          label: r.label,
+          value: r.score,
+          description: r.description
+        })),
+        fieldsFound: dataQuality.foundFields,
+        fieldsInferred: dataQuality.inferredFields,
+        fieldsMissing: dataQuality.missingFields,
+        fieldsManual: dataQuality.manualFields,
+        totalFields: dataQuality.totalFields,
+        totalCriticalGaps: criticalGaps.filter(g => g.severity === 'critical').length,
+        overallCompleteness: dataQuality.completenessPercentage,
+        sectionCompleteness: Object.fromEntries(
+          Object.entries(dataQuality.by_section || {}).map(([k, v]: [string, any]) => [k, v.completeness])
+        ),
+        evidenceSummary: {
+          sitePages: 0,
+          screenshots: 0,
+          searchResults: 0
+        }
+      },
+
+      scores: this.buildScoresView(profile.scores),
+      channels: this.buildChannelsView(brandKitDoc, socialProfileDoc),
+      brandKitSummary: this.buildBrandKitSummary(brandKitDoc, profile),
+      criticalGaps,
+      roadmapSummary: this.buildRoadmapSummary(profile.roadmap),
     };
   }
 
@@ -100,7 +156,6 @@ export class BrandIntelligenceService {
     }
 
     // Fetch brand kit from separate collection
-    // Check both profileId (string, Python) and brandProfileId (ObjectId, legacy)
     const brandKitDoc = await BrandKit.findOne({
       $or: [
         { profileId: profileId },
@@ -109,10 +164,25 @@ export class BrandIntelligenceService {
     });
 
     // Fetch social profiles document
-    const socialProfilesDoc: any = await BrandSocialProfile.findOne({ brandProfileId: profileId }).lean();
+    const socialProfilesDoc = await BrandSocialProfile.findOne({ brandProfileId: profileId }).lean();
 
-    // Python v2 structure - return raw data
-    const brandKitData = brandKitDoc ? {
+    // Calculate detailed data quality
+    const dataQuality = brandKitDoc?.comprehensive
+      ? calculateDataQualityMetrics(brandKitDoc.comprehensive)
+      : {
+          totalFields: 0,
+          foundFields: 0,
+          inferredFields: 0,
+          missingFields: 0,
+          manualFields: 0,
+          averageConfidence: 0,
+          completenessPercentage: calculateLegacyCompleteness(brandKitDoc),
+          editedFieldPaths: [],
+          by_section: {}
+        };
+
+    // Build brand kit data (prefer comprehensive, fallback to legacy)
+    const brandKitData = brandKitDoc?.comprehensive || (brandKitDoc ? {
       visual_identity: brandKitDoc.visual_identity,
       verbal_identity: brandKitDoc.verbal_identity,
       proof_trust: brandKitDoc.proof_trust,
@@ -120,8 +190,11 @@ export class BrandIntelligenceService {
       content: brandKitDoc.content,
       conversion: brandKitDoc.conversion,
       product: brandKitDoc.product
-    } : null;
+    } : null);
 
+    // Build profile data for frontend
+    // Note: favicon_url, elevator_pitch, value_proposition come from brandKit.comprehensive
+    const comprehensive = brandKitDoc?.comprehensive;
     const profileData = {
       name: profile.name,
       domain: profile.domain,
@@ -130,17 +203,11 @@ export class BrandIntelligenceService {
       business_model: profile.business_model,
       persona: profile.persona,
       logo_url: profile.logo_url,
-      favicon_url: profile.favicon_url,
-      primary_colors: profile.primary_colors,
-      heading_font: profile.heading_font,
-      body_font: profile.body_font,
-      elevator_pitch_one_liner: profile.elevator_pitch_one_liner,
-      value_proposition: profile.value_proposition,
-      brand_story: profile.brand_story,
-      tone_voice: profile.tone_voice,
+      // Get from brand kit comprehensive (single source of truth)
+      favicon_url: comprehensive?.visual_identity?.logos?.favicon_url?.value || null,
+      elevator_pitch_one_liner: comprehensive?.verbal_identity?.elevator_pitch?.value || null,
+      value_proposition: comprehensive?.verbal_identity?.value_proposition?.value || null,
       target_customer_profile: profile.target_customer_profile,
-      the_problem_it_solves: profile.the_problem_it_solves,
-      the_transformation_outcome: profile.the_transformation_outcome,
       scores: profile.scores,
       roadmap: profile.roadmap
     };
@@ -150,438 +217,430 @@ export class BrandIntelligenceService {
       brandKitUnwrapped: brandKitData,
       profileData: profileData,
       socialProfiles: socialProfilesDoc ? {
-        profiles: socialProfilesDoc.profiles || [],
-        platforms_found: socialProfilesDoc.platforms_found || [],
-        total_found: socialProfilesDoc.total_found || 0,
-        total_platforms: socialProfilesDoc.total_platforms || 0
+        profiles: (socialProfilesDoc as any).profiles || [],
+        platforms_found: (socialProfilesDoc as any).platforms_found || [],
+        total_found: (socialProfilesDoc as any).total_found || 0,
+        total_platforms: (socialProfilesDoc as any).total_platforms || 0,
+        total_followers: (socialProfilesDoc as any).total_followers
       } : null,
       dataQuality: {
-        totalFields: 0,
-        foundFields: 0,
-        inferredFields: 0,
-        missingFields: 0,
-        averageConfidence: 0,
+        totalFields: dataQuality.totalFields,
+        foundFields: dataQuality.foundFields,
+        inferredFields: dataQuality.inferredFields,
+        missingFields: dataQuality.missingFields,
+        manualFields: dataQuality.manualFields,
+        averageConfidence: dataQuality.averageConfidence,
+        completenessPercentage: dataQuality.completenessPercentage,
         sourceBreakdown: {},
-        lowConfidenceFields: []
+        lowConfidenceFields: [],
+        by_section: dataQuality.by_section ? Object.fromEntries(
+          Object.entries(dataQuality.by_section).map(([sectionId, data]: [string, any]) => [
+            sectionId,
+            {
+              sectionId,
+              sectionLabel: SECTION_LABELS[sectionId] || sectionId,
+              completeness: data.completeness,
+              foundCount: data.found_count,
+              inferredCount: data.inferred_count,
+              missingCount: data.missing_count,
+              manualCount: data.manual_count
+            }
+          ])
+        ) : undefined
       },
-      brandKitRaw: brandKitData,
+      brandKitRaw: brandKitDoc?.comprehensive || brandKitData,
       roadmapFull: null,
       analysisContextFull: null,
     };
+  }
+
+  /**
+   * Get job view from brand_intelligence_jobs collection
+   */
+  static async getJobView(jobId: string): Promise<BrandIntelligenceJobView | null> {
+    const job = await BrandIntelligenceJob.findById(jobId);
+
+    if (!job) {
+      return null;
+    }
+
+    return {
+      id: job._id.toString(),
+      url: job.url,
+      status: job.status,
+      pipeline: job.pipeline,
+      snapshot: job.snapshot ? {
+        strengths: job.snapshot.strengths?.map((s: IStrengthRisk) => s.description || `${s.label} (${s.score}/100)`) || [],
+        risks: job.snapshot.risks?.map((r: IStrengthRisk) => r.description || `${r.label} (${r.score}/100)`) || [],
+        fieldsFound: job.snapshot.fieldsFound || 0,
+        fieldsInferred: job.snapshot.fieldsInferred || 0,
+        fieldsMissing: job.snapshot.fieldsMissing || 0,
+        fieldsManual: job.snapshot.fieldsManual || 0,
+        totalFields: job.snapshot.totalFields || 0,
+        overallCompleteness: job.snapshot.overallCompleteness || 0,
+        sectionCompleteness: job.snapshot.sectionCompleteness || {}
+      } : undefined,
+      criticalGaps: job.criticalGaps,
+      dataQuality: job.dataQuality ? {
+        completeness: job.dataQuality.completeness,
+        accuracy: job.dataQuality.accuracy,
+        freshness: job.dataQuality.freshness,
+        overallQuality: job.dataQuality.overallQuality,
+        averageConfidence: job.dataQuality.averageConfidence
+      } : undefined,
+      scores: job.scores,
+      brand: job.brand,
+      roadmap: job.roadmap,
+      context: job.context,
+      channels: job.channels,
+      profileId: job.profileId,
+      brandKitId: job.brandKitId,
+      socialProfileIds: job.socialProfileIds,
+      progress: job.progress ? {
+        ...job.progress,
+        // DBProgress already has string dates from brand.types.ts
+        phase_started_at: job.progress.phase_started_at,
+        last_updated: job.progress.last_updated
+      } : undefined,
+      created_at: job.created_at.toISOString(),
+      completed_at: job.completed_at?.toISOString(),
+      last_updated: job.last_updated.toISOString(),
+      error: job.error
+    };
+  }
+
+  /**
+   * Update job with computed fields after analysis completion
+   */
+  static async updateJobComputedFields(jobId: string): Promise<void> {
+    const job = await BrandIntelligenceJob.findById(jobId);
+    if (!job || !job.profileId) return;
+
+    // Get profile and brand kit
+    const profile = await BrandProfile.findById(job.profileId);
+    const brandKit = await BrandKit.findOne({
+      $or: [
+        { profileId: job.profileId },
+        { brandProfileId: toObjectId(job.profileId) }
+      ]
+    });
+    const socialProfiles = await BrandSocialProfile.findOne({ brandProfileId: job.profileId });
+
+    if (!profile) return;
+
+    // Calculate data quality
+    const dataQuality = brandKit?.comprehensive
+      ? calculateDataQualityMetrics(brandKit.comprehensive)
+      : {
+          totalFields: 0,
+          foundFields: 0,
+          inferredFields: 0,
+          missingFields: 0,
+          manualFields: 0,
+          averageConfidence: 0,
+          completenessPercentage: calculateLegacyCompleteness(brandKit),
+          editedFieldPaths: [],
+          by_section: {}
+        };
+
+    // Build strengths and risks
+    const { strengths, risks } = buildStrengthsAndRisks(profile.scores);
+
+    // Build critical gaps
+    const criticalGapsRaw = buildCriticalGaps(brandKit?.comprehensive || null, dataQuality);
+
+    // Calculate roadmap completion
+    const totalTasks = profile.roadmap?.total_count || 0;
+    const completedTasks = profile.roadmap?.tasks?.filter((t: any) => t.status === 'completed').length || 0;
+
+    // Build channels
+    const channels = this.buildChannelsView(brandKit, socialProfiles);
+
+    // Update job with computed fields
+    await BrandIntelligenceJob.findByIdAndUpdate(jobId, {
+      snapshot: {
+        strengths,
+        risks,
+        fieldsFound: dataQuality.foundFields,
+        fieldsInferred: dataQuality.inferredFields,
+        fieldsMissing: dataQuality.missingFields,
+        fieldsManual: dataQuality.manualFields,
+        totalFields: dataQuality.totalFields,
+        overallCompleteness: dataQuality.completenessPercentage,
+        sectionCompleteness: Object.fromEntries(
+          Object.entries(dataQuality.by_section || {}).map(([k, v]: [string, any]) => [k, v.completeness])
+        ),
+        evidenceSummary: {
+          sitePages: 0,
+          screenshots: 0,
+          searchResults: 0
+        }
+      },
+      criticalGaps: criticalGapsRaw,
+      dataQuality: {
+        completeness: dataQuality.completenessPercentage,
+        accuracy: 85, // Default accuracy
+        freshness: 100, // Just analyzed
+        overallQuality: Math.round((dataQuality.completenessPercentage + 85 + 100) / 3),
+        averageConfidence: dataQuality.averageConfidence,
+        sourceBreakdown: {},
+        lowConfidenceFields: []
+      },
+      scores: profile.scores,
+      brand: {
+        name: profile.name,
+        domain: profile.domain,
+        url: profile.url,
+        logo_url: profile.logo_url,
+        favicon_url: brandKit?.comprehensive?.visual_identity?.logos?.favicon_url?.value || null
+      },
+      roadmap: {
+        quick_wins_count: profile.roadmap?.quick_wins_count || 0,
+        projects_count: profile.roadmap?.projects_count || 0,
+        long_term_count: profile.roadmap?.long_term_count || 0,
+        total_count: totalTasks,
+        completed_count: completedTasks,
+        completion_percentage: totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0
+      },
+      context: {
+        persona: profile.persona,
+        persona_label: null,
+        entity_type: profile.type,
+        business_model: profile.business_model,
+        channel_orientation: null,
+        url: profile.url || `https://${profile.domain}`
+      },
+      channels: channels.channels,
+      brandKitId: brandKit?._id?.toString(),
+      socialProfileIds: socialProfiles ? [socialProfiles._id.toString()] : [],
+      last_updated: new Date()
+    });
   }
 
   // ============================================================================
   // Private helper methods
   // ============================================================================
 
-  private static buildSnapshot(comprehensive: any, scores: any, profile: any) {
-    const gaps = comprehensive?.gaps_summary || {};
-    const evidence = comprehensive?.evidence_sources || comprehensive?.meta?.data_sources?.value || {};
-
-    // Build strengths and risks from scores
-    // Handle BOTH flat format (current) and nested format (future)
-    const dimensions = scores?.dimensions || {};
-    const dimensionScores: { id: string; label: string; value: number; status: string }[] = [];
-
-    // If scores is flat format (current Python backend)
-    if (!dimensions || Object.keys(dimensions).length === 0) {
-      // Build from flat scores
-      Object.keys(scores || {}).forEach(key => {
-        if (key !== 'overall_score' && key !== 'score_rationale' && typeof scores[key] === 'number') {
-          dimensionScores.push({
-            id: key,
-            label: DIMENSION_LABELS[key] || key,
-            value: scores[key],
-            status: 'scored',
-          });
-        }
-      });
-    } else {
-      // Use nested dimensions (future Python backend)
-      Object.keys(dimensions).forEach(key => {
-        const dim = dimensions[key];
-        if (dim.status === 'scored' && dim.value !== null) {
-          dimensionScores.push({
-            id: key,
-            label: DIMENSION_LABELS[key] || key,
-            value: dim.value,
-            status: dim.status,
-          });
-        }
-      });
-    }
-
-    // Sort by value
-    dimensionScores.sort((a, b) => (b.value || 0) - (a.value || 0));
-
-    const strengths = dimensionScores.slice(0, 3); // Top 3
-    const risks = dimensionScores.slice(-3).reverse(); // Bottom 3
-
-    // Count fields by status
-    const bySection = gaps.by_section || {};
-    let totalFound = 0;
-    let totalInferred = 0;
-    let totalMissing = 0;
-
-    Object.values(bySection).forEach((section: any) => {
-      totalFound += section.found_count || 0;
-      totalInferred += section.inferred_count || 0;
-      totalMissing += section.missing_count || 0;
-    });
-
-    // Section completeness map
-    const sectionCompleteness: Record<string, number> = {};
-    Object.keys(bySection).forEach(sectionId => {
-      const section = bySection[sectionId];
-      sectionCompleteness[sectionId] = section.completeness || 0;
-    });
-
-    return {
-      overallScore: profile.overall_score,
-      strengths: strengths as StrengthRisk[],
-      risks: risks as StrengthRisk[],
-      fieldsFound: totalFound,
-      fieldsInferred: totalInferred,
-      fieldsMissing: totalMissing,
-      totalCriticalGaps: profile.total_critical_gaps || 0,
-      sectionCompleteness,
-      evidenceSummary: {
-        sitePages: typeof evidence.site_pages === 'number' ? evidence.site_pages : (evidence.site_pages?.length || 0),
-        screenshots: typeof evidence.screenshots === 'number' ? evidence.screenshots : (evidence.screenshots?.length || 0),
-        searchResults: typeof evidence.search_results === 'number' ? evidence.search_results : (evidence.search_results?.length || 0),
-      },
-    };
-  }
-
   private static buildScoresView(scores: any): BrandScoresView {
     if (!scores) {
       return {
         overall: null,
-        dimensions: {},
+        dimensions: {}
       };
     }
 
-    const dimensions: any = {};
-
-    // Handle BOTH flat format (current) and nested format (future)
-    if (scores.dimensions && Object.keys(scores.dimensions).length > 0) {
-      // Nested format (future)
-      Object.keys(scores.dimensions).forEach(key => {
-        const dim = scores.dimensions[key];
-        dimensions[key] = {
-          value: dim.value,
-          status: dim.status,
-          label: DIMENSION_LABELS[key] || key,
-        };
-      });
-    } else {
-      // Flat format (current) - convert to nested structure
-      Object.keys(scores).forEach(key => {
-        if (key !== 'overall_score' && key !== 'score_rationale' && typeof scores[key] === 'number') {
-          dimensions[key] = {
-            value: scores[key],
-            status: 'scored',
-            label: DIMENSION_LABELS[key] || key,
-          };
-        }
-      });
-    }
-
     return {
-      overall: scores.overall_score ?? null,
-      dimensions,
-      metadata: scores.metadata,
+      overall: scores.overall || null,
+      dimensions: {
+        visual_clarity: scores.visual_clarity || null,
+        verbal_clarity: scores.verbal_clarity || null,
+        positioning: scores.positioning || null,
+        presence: scores.presence || null,
+        conversion_trust: scores.conversion_trust || null
+      }
     };
   }
 
-  private static buildChannelsView(comprehensive: any): ChannelsOverviewView {
+  private static buildChannelsView(brandKit: any, socialProfiles: any): ChannelsOverviewView {
     const channels: ChannelStatus[] = [];
 
-    // Use imported helpers from fieldValue.ts (handle FieldValue format properly)
-    const getValue = getFieldValue;
-    const getItems = getFieldItems;
-
-    // Website (always present if we have data)
-    const domain = getValue(comprehensive?.meta?.canonical_domain)
-      || comprehensive?.domain
-      || 'Domain';
+    // Website (always present)
     channels.push({
       id: 'website',
       label: 'Website',
       present: true,
-      details: domain,
+      details: 'Domain'
     });
 
-    // Blog - handle both formats
-    const blogPresent = comprehensive?.content_assets?.blog_present;
-    let hasBlog = false;
-
-    if (blogPresent) {
-      // FUTURE format: {value: {exists: true}, status: 'found'}
-      if (blogPresent.value && blogPresent.value.exists === true) {
-        hasBlog = true;
-      }
-      // Check status field
-      else if (blogPresent.status === 'found') {
-        hasBlog = true;
-      }
-      // CURRENT format: {exists: true} or just true
-      else if (blogPresent.exists === true || blogPresent === true) {
-        hasBlog = true;
-      }
-    }
-
+    // Blog
+    const hasBlog = brandKit?.content?.has_blog ||
+                    brandKit?.comprehensive?.content_assets?.blog_present?.value === true;
     channels.push({
       id: 'blog',
       label: 'Blog',
       present: hasBlog,
-      details: hasBlog ? 'Active' : undefined,
+      ...(hasBlog && { details: brandKit?.content?.blog_url || 'Active' })
     });
 
-    // Social Profiles - handle both formats
-    const socialProfiles = comprehensive?.external_presence?.social_profiles;
-    const socialItems = getItems(socialProfiles);
-    const hasSocial = socialItems.length > 0 || socialProfiles?.status === 'found';
-
-    if (hasSocial && socialItems.length > 0) {
-      socialItems.forEach((profile: any) => {
-        channels.push({
-          id: profile.platform?.toLowerCase() || 'social',
-          label: profile.platform || 'Social',
-          present: true,
-          urls: [profile.url],
-        });
-      });
+    // Social Media
+    const hasSocial = socialProfiles && socialProfiles.total_found > 0;
+    if (hasSocial && socialProfiles.profiles) {
+      // Add individual social platforms
+      for (const profile of socialProfiles.profiles) {
+        if (profile.status === 'found' || profile.status === 'verified' || profile.status === 'manual') {
+          channels.push({
+            id: profile.platform.toLowerCase(),
+            label: profile.platform,
+            present: true,
+            details: profile.followers_count ? `${profile.followers_count} followers` : undefined,
+            urls: profile.url ? [profile.url] : undefined
+          });
+        }
+      }
     } else {
       channels.push({
         id: 'social',
         label: 'Social Media',
-        present: false,
+        present: false
       });
     }
 
-    // Review Sites - handle both formats
-    const reviews = comprehensive?.proof_trust?.third_party_reviews;
-    const reviewItems = getItems(reviews);
-    const hasReviews = reviewItems.length > 0 || reviews?.status === 'found';
-
+    // Review Sites
+    const hasReviews = brandKit?.proof_trust?.reviews_count > 0 ||
+                       (brandKit?.comprehensive?.proof_trust?.third_party_reviews?.items?.length || 0) > 0;
     channels.push({
       id: 'review_sites',
       label: 'Review Sites',
       present: hasReviews,
-      details: hasReviews ? `${reviewItems.length} platforms` : undefined,
+      ...(hasReviews && { details: `${brandKit?.proof_trust?.reviews_count || 0} reviews` })
     });
 
     // Build summary text
     const presentChannels = channels.filter(c => c.present).map(c => c.label);
     const missingChannels = channels.filter(c => !c.present).map(c => c.label);
 
-    const summaryText = `Channels used: ${presentChannels.join(', ')}. ${
-      missingChannels.length > 0 ? `Missing: ${missingChannels.join(', ')}.` : ''
-    }`;
-
     return {
       channels,
-      summaryText,
+      summaryText: `Channels used: ${presentChannels.join(', ') || 'None'}. ${
+        missingChannels.length > 0 ? `Missing: ${missingChannels.join(', ')}.` : ''
+      }`
     };
   }
 
-  private static buildBrandKitSummary(comprehensive: any): BrandKitSummaryView {
-    if (!comprehensive) {
+  private static buildBrandKitSummary(brandKit: any, profile?: any): BrandKitSummaryView {
+    // Try comprehensive first, then legacy
+    const comprehensive = brandKit?.comprehensive;
+
+    if (comprehensive) {
       return {
-        meta: { brandName: null, domain: null, industry: null, companyType: null },
-        visualIdentity: { primaryLogo: null, primaryColors: [], headingFont: null, bodyFont: null },
-        verbalIdentity: { tagline: null, elevatorPitch: null, toneAdjectives: [] },
-        audiencePositioning: { primaryICP: null, problemsSolved: [], category: null },
-        proof: { testimonials: 0, caseStudies: 0, clientLogos: 0, awards: 0 },
+        meta: {
+          brandName: comprehensive.meta?.brand_name?.value || profile?.name || null,
+          domain: comprehensive.meta?.canonical_domain?.value || profile?.domain || null,
+          industry: comprehensive.meta?.industry?.value || null,
+          companyType: comprehensive.meta?.company_type?.value || profile?.type || null
+        },
+        visualIdentity: {
+          primaryLogo: comprehensive.visual_identity?.logos?.primary_logo_url?.value || profile?.logo_url || null,
+          primaryColors: comprehensive.visual_identity?.color_system?.primary_colors?.items?.map((c: any) => c.hex) || [],
+          headingFont: comprehensive.visual_identity?.typography?.heading_font?.value?.name || null,
+          bodyFont: comprehensive.visual_identity?.typography?.body_font?.value?.name || null
+        },
+        verbalIdentity: {
+          tagline: comprehensive.verbal_identity?.tagline?.value || null,
+          elevatorPitch: comprehensive.verbal_identity?.elevator_pitch?.value || profile?.elevator_pitch_one_liner || null,
+          toneAdjectives: comprehensive.verbal_identity?.tone_of_voice?.adjectives?.items || []
+        },
+        audiencePositioning: {
+          primaryICP: comprehensive.audience_positioning?.primary_icp?.value
+            ? `${comprehensive.audience_positioning.primary_icp.value.role} at ${comprehensive.audience_positioning.primary_icp.value.company_type}`
+            : (profile?.target_customer_profile?.role || null),
+          problemsSolved: comprehensive.audience_positioning?.problems_solved?.items?.slice(0, 3) || [],
+          category: comprehensive.audience_positioning?.category?.value || null
+        },
+        proof: {
+          testimonials: comprehensive.proof_trust?.testimonials?.items?.length || 0,
+          caseStudies: comprehensive.proof_trust?.case_studies?.items?.length || 0,
+          clientLogos: comprehensive.proof_trust?.client_logos?.items?.length || 0,
+          awards: comprehensive.proof_trust?.awards_certifications?.items?.length || 0
+        }
       };
     }
 
-    // Use imported helpers from fieldValue.ts (handle FieldValue format properly)
-    const getValue = getFieldValue;
-    const getItems = getFieldItems;
-
-    // Meta - handle both nested meta section and top-level fields (old v2 format)
-    const meta = {
-      brandName: getValue(comprehensive.meta?.brand_name) || comprehensive.brand_name || null,
-      domain: getValue(comprehensive.meta?.canonical_domain) || comprehensive.domain || null,
-      industry: getValue(comprehensive.meta?.industry) || comprehensive.industry || null,
-      companyType: getValue(comprehensive.meta?.company_type) || comprehensive.company_type || null,
-    };
-
-    // Visual Identity - handle BOTH old v2 format and new comprehensive format
-    // NEW format: color_system.primary_colors, logos.primary_logo_url, typography.heading_font
-    // OLD format: color_palette, heading_style, body_style (no logos)
-    const visualId = comprehensive.visual_identity || {};
-
-    // Colors
-    let primaryColors: any[] = [];
-    if (visualId.color_system?.primary_colors) {
-      // NEW format
-      primaryColors = getItems(visualId.color_system.primary_colors);
-    } else if (visualId.color_palette) {
-      // OLD v2 format - color_palette is array of hex strings
-      primaryColors = Array.isArray(visualId.color_palette)
-        ? visualId.color_palette.map((hex: string) => ({ hex }))
-        : [];
-    }
-
-    // Logo
-    const primaryLogo = getValue(visualId.logos?.primary_logo_url) || null;
-
-    // Typography
-    let headingFont = null;
-    let bodyFont = null;
-
-    if (visualId.typography?.heading_font) {
-      // NEW format
-      const hf = getValue(visualId.typography.heading_font);
-      headingFont = typeof hf === 'object' ? hf?.name : hf;
-    } else if (visualId.typography?.heading_style) {
-      // OLD v2 format
-      headingFont = visualId.typography.heading_style;
-    }
-
-    if (visualId.typography?.body_font) {
-      // NEW format
-      const bf = getValue(visualId.typography.body_font);
-      bodyFont = typeof bf === 'object' ? bf?.name : bf;
-    } else if (visualId.typography?.body_style) {
-      // OLD v2 format
-      bodyFont = visualId.typography.body_style;
-    }
-
-    const visualIdentity = {
-      primaryLogo,
-      primaryColors: primaryColors.map((c: any) => c.hex || c).filter(Boolean).slice(0, 3),
-      headingFont,
-      bodyFont,
-    };
-
-    // Verbal Identity
-    const toneAdjectives = getItems(comprehensive.verbal_identity?.tone_of_voice?.adjectives) as string[];
-    const verbalIdentity = {
-      tagline: getValue(comprehensive.verbal_identity?.tagline),
-      elevatorPitch: getValue(comprehensive.verbal_identity?.elevator_pitch),
-      toneAdjectives: toneAdjectives.slice(0, 5),
-    };
-
-    // Audience Positioning
-    const primaryICP = getValue(comprehensive.audience_positioning?.primary_icp);
-    const icpText = primaryICP && typeof primaryICP === 'object'
-      ? `${primaryICP.role || primaryICP.title || 'Professional'} at ${primaryICP.company_type || primaryICP.industry || 'Company'}`
-      : primaryICP;
-    const problemsSolved = getItems(comprehensive.audience_positioning?.problems_solved) as string[];
-
-    const audiencePositioning = {
-      primaryICP: icpText,
-      problemsSolved: problemsSolved.slice(0, 3),
-      category: getValue(comprehensive.audience_positioning?.category),
-    };
-
-    // Proof
-    const proof = {
-      testimonials: getItems(comprehensive.proof_trust?.testimonials).length,
-      caseStudies: getItems(comprehensive.proof_trust?.case_studies).length,
-      clientLogos: getItems(comprehensive.proof_trust?.client_logos).length,
-      awards: getItems(comprehensive.proof_trust?.awards_certifications).length,
-    };
-
+    // Legacy fallback
     return {
-      meta,
-      visualIdentity,
-      verbalIdentity,
-      audiencePositioning,
-      proof,
+      meta: {
+        brandName: profile?.name || brandKit?.brand_name || null,
+        domain: profile?.domain || brandKit?.domain || null,
+        industry: null,
+        companyType: profile?.type || null
+      },
+      visualIdentity: {
+        primaryLogo: profile?.logo_url || brandKit?.visual_identity?.logo_url || null,
+        primaryColors: brandKit?.visual_identity?.colors?.primary || [],
+        headingFont: brandKit?.visual_identity?.typography?.heading || null,
+        bodyFont: brandKit?.visual_identity?.typography?.body || null
+      },
+      verbalIdentity: {
+        tagline: brandKit?.verbal_identity?.tagline || null,
+        elevatorPitch: profile?.elevator_pitch_one_liner || brandKit?.verbal_identity?.elevator_pitch || null,
+        toneAdjectives: brandKit?.verbal_identity?.tone_voice || []
+      },
+      audiencePositioning: {
+        primaryICP: profile?.target_customer_profile?.role || null,
+        problemsSolved: [],
+        category: null
+      },
+      proof: {
+        testimonials: brandKit?.proof_trust?.testimonials_count || 0,
+        caseStudies: brandKit?.proof_trust?.case_studies_count || 0,
+        clientLogos: brandKit?.proof_trust?.client_logos_count || 0,
+        awards: brandKit?.proof_trust?.awards_count || 0
+      }
     };
   }
 
-  private static buildCriticalGaps(comprehensive: any): UICriticalGap[] {
-    if (!comprehensive?.gaps_summary?.critical_gaps) {
-      return [];
+  private static buildRoadmapSummary(roadmap: any): RoadmapSummaryView {
+    if (!roadmap || !roadmap.tasks) {
+      return {
+        quickWins: [],
+        campaigns: [],
+        totalTasks: 0,
+        completedTasks: 0,
+        completionPercentage: 0,
+        estimatedTimeline: ''
+      };
     }
 
-    return comprehensive.gaps_summary.critical_gaps.map((gap: any) => {
-      // Parse field path (e.g., 'verbal_identity.tagline')
-      const parts = gap.field.split('.');
-      const sectionId = parts[0];
-      const fieldId = parts.slice(1).join('.');
+    const tasks = roadmap.tasks || [];
+    const completedTasks = tasks.filter((t: any) => t.status === 'completed').length;
 
-      return {
-        fieldId: gap.field,
-        fieldLabel: this.humanizeFieldName(fieldId),
-        sectionLabel: SECTION_LABELS[sectionId] || sectionId,
-        severity: gap.severity || 'critical',
-        recommendation: gap.recommendation || `Add ${this.humanizeFieldName(fieldId)}`,
-      };
-    });
-  }
+    // Get quick wins (type === 'quick_win')
+    const quickWins: RoadmapTaskSummary[] = tasks
+      .filter((t: any) => t.type === 'quick_win')
+      .slice(0, 5)
+      .map((t: any) => ({
+        id: t.task_id,
+        title: t.title,
+        description: t.description,
+        priority: t.priority_score,
+        status: t.status || 'pending',
+        category: t.category,
+        effort: t.effort,
+        impact: t.impact
+      }));
 
-  private static async buildRoadmapSummary(
-    profileId: Types.ObjectId,
-    roadmap: any
-  ): Promise<RoadmapSummaryView> {
-    // Get quick win tasks from database
-    const quickWinTasks = await BrandRoadmapTask.find({
-      brandProfileId: profileId,
-      isQuickWin: 1
-    }).limit(10);
-
-    const quickWins: RoadmapTaskSummary[] = quickWinTasks.map((task: any) => ({
-      id: task._id,
-      title: task.title || '',
-      description: task.description || '',
-      category: task.category || 'other',
-      impact: task.impact || 'medium',
-      effort: task.effort || 'medium',
-      status: task.status || 'pending',
-      acceptanceCriteria: task.acceptanceCriteria || undefined,
-    }));
-
-    // Get campaigns with task counts
-    const campaigns = await BrandRoadmapCampaign.find({ brandProfileId: profileId });
-
-    const campaignSummaries: RoadmapCampaignSummary[] = await Promise.all(
-      campaigns.map(async (campaign: any) => {
-        // Count total and completed tasks
-        const totalTasks = await BrandRoadmapTask.countDocuments({ campaignId: campaign._id });
-        const completedTasks = await BrandRoadmapTask.countDocuments({
-          campaignId: campaign._id,
-          status: 'completed'
-        });
-
-        const completionPercentage = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
-
-        return {
-          id: campaign._id,
-          title: campaign.title || '',
-          shortTitle: campaign.shortTitle || '',
-          category: campaign.category || '',
-          estimatedTimeline: campaign.estimatedTimeline || '',
-          completionPercentage,
-          totalTasks,
-          completedTasks,
-        };
-      })
-    );
+    // Get projects
+    const campaigns: RoadmapCampaignSummary[] = tasks
+      .filter((t: any) => t.type === 'project')
+      .map((t: any) => ({
+        id: t.task_id,
+        title: t.title,
+        shortTitle: t.title?.substring(0, 30) || '',
+        description: t.description,
+        priority: t.priority_score,
+        status: t.status || 'pending',
+        category: t.category,
+        effort: t.effort,
+        impact: t.impact,
+        estimatedTimeline: '',
+        completionPercentage: t.status === 'completed' ? 100 : 0,
+        totalTasks: 1,
+        completedTasks: t.status === 'completed' ? 1 : 0
+      }));
 
     return {
       quickWins,
-      campaigns: campaignSummaries,
-      totalTasks: roadmap?.total_tasks || 0,
-      estimatedTimeline: roadmap?.estimated_timeline || '',
+      campaigns,
+      totalTasks: roadmap.total_count || tasks.length,
+      completedTasks,
+      completionPercentage: tasks.length > 0 ? Math.round((completedTasks / tasks.length) * 100) : 0,
+      estimatedTimeline: `${roadmap.quick_wins_count || 0} quick wins, ${roadmap.projects_count || 0} projects`
     };
-  }
-
-  private static humanizeFieldName(fieldName: string): string {
-    return fieldName
-      .replace(/_/g, ' ')
-      .replace(/\b\w/g, (c) => c.toUpperCase());
   }
 
   /**
    * List all brand profiles for a user with filtering and pagination
-   * Returns lightweight list items for efficient list rendering
+   * Fetches data from both brand_profiles AND brand_kits (single source of truth)
    */
   static async listProfiles(
     userId: string | number,
@@ -596,15 +655,12 @@ export class BrandIntelligenceService {
     limit: number = 20,
     offset: number = 0
   ): Promise<{ profiles: BrandProfileListItem[]; total: number }> {
-    // Build query filter
-    // userId is stored as string in MongoDB (from Python backend), not ObjectId
-    // brand_profiles collection only contains completed profiles (no status field needed)
     const query: any = {
       userId: userId.toString()
     };
 
     if (filters.persona) {
-      query.persona_id = filters.persona;
+      query.persona = filters.persona;
     }
 
     if (filters.minScore !== undefined) {
@@ -612,14 +668,14 @@ export class BrandIntelligenceService {
     }
 
     if (filters.entityType) {
-      query.entity_type = filters.entityType;
+      query.type = filters.entityType;
     }
 
     // Build sort
     const sortObj: any = {};
     const sortField = sort === 'overall_score' ? 'overall_score' :
                       sort === 'completeness_score' ? 'completeness_score' :
-                      sort === 'brand_name' ? 'brand_name' :
+                      sort === 'brand_name' ? 'name' :
                       'created_at';
     sortObj[sortField] = order === 'asc' ? 1 : -1;
 
@@ -627,42 +683,67 @@ export class BrandIntelligenceService {
     const profiles = await BrandProfile.find(query)
       .sort(sortObj)
       .skip(offset)
-      .limit(limit);
+      .limit(limit)
+      .lean();
 
     // Get total count
     const total = await BrandProfile.countDocuments(query);
 
-    // Fetch brand kits for all profiles
+    // Fetch brand kits for these profiles to get the actual data
     const profileIds = profiles.map((p: any) => p._id.toString());
-    const brandKits = await BrandKit.find({ profileId: { $in: profileIds } })
-      .select('profileId kitData')
-      .lean();
+    const brandKits = await BrandKit.find({
+      $or: [
+        { profileId: { $in: profileIds } },
+        { brandProfileId: { $in: profileIds.map(id => toObjectId(id)) } }
+      ]
+    }).lean();
 
-    // Create a map for quick lookup
-    const brandKitMap = new Map(
-      brandKits.map((kit: any) => [kit.profileId, kit.kitData])
-    );
+    // Create a map of profileId -> brandKit for quick lookup
+    const brandKitMap = new Map<string, any>();
+    for (const kit of brandKits) {
+      const profileId = kit.profileId || kit.brandProfileId?.toString();
+      if (profileId) {
+        brandKitMap.set(profileId, kit);
+      }
+    }
 
-    // Build lightweight list items (no heavy processing)
-    const getValue = getFieldValue;
-    const listItems: BrandProfileListItem[] = profiles
-      .map((p: any) => {
-        // Get brand kit from separate collection
-        const kitData = brandKitMap.get(p._id.toString());
+    // Build list items with data from both profile AND brand kit
+    const listItems: BrandProfileListItem[] = profiles.map((p: any) => {
+      const profileId = p._id.toString();
+      const brandKit = brandKitMap.get(profileId);
+      const comprehensive = brandKit?.comprehensive;
 
-        // Extract logo from brand kit if available
-        const logo = kitData?.external_presence?.visual_identity_v3?.logos?.primary_logo_url
-          ? getValue(kitData.external_presence.visual_identity_v3.logos.primary_logo_url)
-          : null;
+      // Get data from brand kit (single source of truth), fallback to profile
+      const brandName = comprehensive?.meta?.brand_name?.value ||
+                        brandKit?.brand_name ||
+                        p.name ||
+                        null;
 
-        return {
-          id: p._id.toString(),
-          domain: p.domain || 'unknown',
-          brandName: p.brand_name,
-          logo,
-          personaId: p.persona_id,
-        };
-      });
+      const logoUrl = comprehensive?.visual_identity?.logos?.primary_logo_url?.value ||
+                      p.logo_url ||
+                      null;
+
+      const persona = p.persona || null;
+
+      // Calculate completeness from brand kit data
+      let completeness = p.completeness_score || 0;
+      if (comprehensive && !p.completeness_score) {
+        const dataQuality = calculateDataQualityMetrics(comprehensive);
+        completeness = dataQuality.completenessPercentage;
+      }
+
+      const overallScore = p.scores?.overall ?? p.overall_score ?? null;
+
+      return {
+        id: profileId,
+        domain: p.domain || 'unknown',
+        brandName,
+        logo: logoUrl,
+        personaId: persona,
+        completeness,
+        overallScore
+      };
+    });
 
     return {
       profiles: listItems,
@@ -758,165 +839,6 @@ export class BrandIntelligenceService {
     return {
       updated: tasks.length,
       tasks: taskSummaries,
-    };
-  }
-
-  /**
-   * V2 Helper methods for Python flat structure
-   */
-  private static buildScoresViewV2(scores: any): BrandScoresView {
-    if (!scores) {
-      return {
-        overall: null,
-        dimensions: {}
-      };
-    }
-
-    return {
-      overall: scores.overall || null,
-      dimensions: {
-        visual_clarity: scores.visual_clarity || null,
-        verbal_clarity: scores.verbal_clarity || null,
-        positioning: scores.positioning || null,
-        presence: scores.presence || null,
-        conversion_trust: scores.conversion_trust || null
-      }
-    };
-  }
-
-  private static buildSnapshotV2(profile: any, brandKit: any): any {
-    return {
-      strengths: [],
-      risks: [],
-      fieldsFound: 0,
-      fieldsInferred: 0,
-      fieldsMissing: 0,
-      totalCriticalGaps: 0,
-      sectionCompleteness: {},
-      evidenceSummary: {
-        sitePages: 0,
-        screenshots: 0,
-        searchResults: 0
-      }
-    };
-  }
-
-  private static buildChannelsViewV2(brandKit: any): ChannelsOverviewView {
-    const hasBlog = brandKit?.content?.has_blog || false;
-    const hasSocial = false; // TODO: check social profiles
-    const hasReviews = false; // TODO: check reviews
-
-    const channels = [
-      {
-        id: 'website',
-        label: 'Website',
-        present: true,
-        details: 'Domain'
-      },
-      {
-        id: 'blog',
-        label: 'Blog',
-        present: hasBlog,
-        ...(hasBlog && { details: brandKit?.content?.blog_url })
-      },
-      {
-        id: 'social',
-        label: 'Social Media',
-        present: hasSocial
-      },
-      {
-        id: 'review_sites',
-        label: 'Review Sites',
-        present: hasReviews
-      }
-    ];
-
-    const presentChannels = channels.filter(c => c.present).map(c => c.label);
-    const missingChannels = channels.filter(c => !c.present).map(c => c.label);
-
-    return {
-      channels: channels as ChannelStatus[],
-      summaryText: `Channels used: ${presentChannels.join(', ')}. Missing: ${missingChannels.join(', ')}.`
-    };
-  }
-
-  private static buildRoadmapSummaryV2(roadmap: any): RoadmapSummaryView {
-    if (!roadmap || !roadmap.tasks) {
-      return {
-        quickWins: [],
-        campaigns: [],
-        totalTasks: 0,
-        estimatedTimeline: ''
-      };
-    }
-
-    // Get quick wins (type === 'quick_win')
-    const quickWins = roadmap.tasks
-      .filter((t: any) => t.type === 'quick_win')
-      .slice(0, 5)
-      .map((t: any) => ({
-        id: t.task_id,
-        title: t.title,
-        description: t.description,
-        priority: t.priority_score,
-        status: t.status || 'pending',
-        category: t.category,
-        effort: t.effort,
-        impact: t.impact
-      }));
-
-    // Get projects
-    const projects = roadmap.tasks
-      .filter((t: any) => t.type === 'project')
-      .map((t: any) => ({
-        id: t.task_id,
-        title: t.title,
-        description: t.description,
-        priority: t.priority_score,
-        status: t.status || 'pending',
-        category: t.category,
-        effort: t.effort,
-        impact: t.impact
-      }));
-
-    return {
-      quickWins,
-      campaigns: projects,
-      totalTasks: roadmap.total_count || roadmap.tasks.length,
-      estimatedTimeline: `${roadmap.quick_wins_count || 0} quick wins, ${roadmap.projects_count || 0} projects`
-    };
-  }
-
-  private static buildBrandKitSummaryV2(brandKit: any, profile?: any): BrandKitSummaryView {
-    return {
-      meta: {
-        brandName: profile?.name || brandKit?.brand_name || null,
-        domain: profile?.domain || brandKit?.domain || null,
-        industry: null,
-        companyType: profile?.type || null
-      },
-      visualIdentity: {
-        primaryLogo: profile?.logo_url || brandKit?.visual_identity?.logo_url || null,
-        primaryColors: profile?.primary_colors || brandKit?.visual_identity?.colors?.primary || [],
-        headingFont: profile?.heading_font || brandKit?.visual_identity?.typography?.heading || null,
-        bodyFont: profile?.body_font || brandKit?.visual_identity?.typography?.body || null
-      },
-      verbalIdentity: {
-        tagline: brandKit?.verbal_identity?.tagline || null,
-        elevatorPitch: profile?.elevator_pitch_one_liner || brandKit?.verbal_identity?.elevator_pitch || null,
-        toneAdjectives: profile?.tone_voice || brandKit?.verbal_identity?.tone_voice || []
-      },
-      audiencePositioning: {
-        primaryICP: profile?.target_customer_profile?.role || null,
-        problemsSolved: profile?.the_problem_it_solves || [],
-        category: null
-      },
-      proof: {
-        testimonials: brandKit?.proof_trust?.testimonials_count || 0,
-        caseStudies: brandKit?.proof_trust?.case_studies_count || 0,
-        clientLogos: brandKit?.proof_trust?.client_logos_count || 0,
-        awards: brandKit?.proof_trust?.awards_count || 0
-      }
     };
   }
 }

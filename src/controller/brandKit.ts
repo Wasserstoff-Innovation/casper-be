@@ -1,9 +1,219 @@
 import { Request, Response } from "express";
 import BrandKitsService from "../services/brandKit";
+import { ComprehensiveBrandKit, VisualKitUIConfig } from "../types/brandKit";
 
 export default class BrandKitController {
   
-  // NEW: Auto-create brand kit from v2 brand profile
+  // ============================================
+  // UNIFIED BRAND KIT ENDPOINTS
+  // ============================================
+
+  /**
+   * GET /brand-kits/comprehensive/:profile_id
+   * Get the complete brand kit with all data and UI config.
+   * This is the primary endpoint for the brand kit dialog.
+   */
+  static async getComprehensiveBrandKit(req: Request, res: Response) {
+    try {
+      const user: any = req.user;
+      if (!req.user) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const profileId = req.params.profile_id;
+      console.log("Getting comprehensive brand kit for profile:", profileId);
+
+      const result = await BrandKitsService.getComprehensiveBrandKit(profileId);
+      
+      if (!result) {
+        return res.status(404).json({ error: "Brand kit not found" });
+      }
+
+      return res.status(200).json({
+        success: true,
+        brandKitId: result.brandKitId,
+        comprehensive: result.comprehensive,
+        visualKitConfig: result.visualKitConfig,
+        dataQuality: result.dataQuality,
+      });
+    } catch (error: any) {
+      console.error("Error getting comprehensive brand kit:", error.message);
+      if (error.message.includes('not found')) {
+        return res.status(404).json({ error: error.message });
+      }
+      return res.status(500).json({ error: error.message });
+    }
+  }
+
+  /**
+   * PATCH /brand-kits/comprehensive/:profile_id/field
+   * Update a single field in the comprehensive brand kit.
+   * Body: { path: "visual_identity.color_system.primary_colors.items[0].hex", value: "#FF0000" }
+   */
+  static async updateComprehensiveField(req: Request, res: Response) {
+    try {
+      const user: any = req.user;
+      if (!req.user) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const profileId = req.params.profile_id;
+      const { path, value } = req.body;
+
+      if (!path) {
+        return res.status(400).json({ error: "path is required" });
+      }
+
+      console.log(`Updating field ${path} for profile ${profileId}`);
+
+      const result = await BrandKitsService.updateComprehensiveField(profileId, path, value);
+      
+      return res.status(200).json({
+        success: true,
+        path: result.path,
+        newValue: result.newValue,
+        message: `Field ${path} updated successfully`,
+      });
+    } catch (error: any) {
+      console.error("Error updating comprehensive field:", error.message);
+      if (error.message.includes('not found')) {
+        return res.status(404).json({ error: error.message });
+      }
+      return res.status(500).json({ error: error.message });
+    }
+  }
+
+  /**
+   * PATCH /brand-kits/comprehensive/:profile_id/section
+   * Update an entire section of the comprehensive brand kit.
+   * Body: { section: "visual_identity", data: { ... } }
+   */
+  static async updateComprehensiveSection(req: Request, res: Response) {
+    try {
+      const user: any = req.user;
+      if (!req.user) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const profileId = req.params.profile_id;
+      const { section, data } = req.body;
+
+      const validSections: (keyof ComprehensiveBrandKit)[] = [
+        'meta',
+        'visual_identity',
+        'verbal_identity',
+        'audience_positioning',
+        'product_offers',
+        'proof_trust',
+        'seo_identity',
+        'external_presence',
+        'content_assets',
+        'competitor_analysis',
+        'contact_info',
+        'gaps_summary',
+      ];
+
+      if (!section || !validSections.includes(section)) {
+        return res.status(400).json({
+          error: `Invalid section. Must be one of: ${validSections.join(', ')}`,
+        });
+      }
+
+      if (!data) {
+        return res.status(400).json({ error: "data is required" });
+      }
+
+      console.log(`Updating section ${section} for profile ${profileId}`);
+
+      const result = await BrandKitsService.updateComprehensiveSection(profileId, section, data);
+      
+      return res.status(200).json({
+        success: true,
+        section: result.section,
+        message: `Section ${section} updated successfully`,
+      });
+    } catch (error: any) {
+      console.error("Error updating comprehensive section:", error.message);
+      if (error.message.includes('not found')) {
+        return res.status(404).json({ error: error.message });
+      }
+      return res.status(500).json({ error: error.message });
+    }
+  }
+
+  /**
+   * PUT /brand-kits/comprehensive/:profile_id/visual-config
+   * Update visual kit UI configuration (slides, export settings).
+   * This updates presentation settings, NOT brand data.
+   */
+  static async updateVisualKitConfig(req: Request, res: Response) {
+    try {
+      const user: any = req.user;
+      if (!req.user) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const profileId = req.params.profile_id;
+      const { slides, settings } = req.body;
+
+      if (!slides && !settings) {
+        return res.status(400).json({ error: "slides or settings is required" });
+      }
+
+      console.log(`Updating visual kit config for profile ${profileId}`);
+
+      const result = await BrandKitsService.updateVisualKitConfig(profileId, { slides, settings });
+      
+      return res.status(200).json({
+        success: true,
+        visualKitConfig: result.visualKitConfig,
+        message: "Visual kit configuration updated successfully",
+      });
+    } catch (error: any) {
+      console.error("Error updating visual kit config:", error.message);
+      if (error.message.includes('not found')) {
+        return res.status(404).json({ error: error.message });
+      }
+      return res.status(500).json({ error: error.message });
+    }
+  }
+
+  /**
+   * POST /brand-kits/comprehensive/:profile_id/regenerate
+   * Regenerate comprehensive structure from latest analysis data.
+   * Preserves user edits.
+   */
+  static async regenerateFromAnalysis(req: Request, res: Response) {
+    try {
+      const user: any = req.user;
+      if (!req.user) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const profileId = req.params.profile_id;
+      console.log(`Regenerating brand kit from analysis for profile ${profileId}`);
+
+      const result = await BrandKitsService.regenerateFromAnalysis(profileId);
+      
+      return res.status(200).json({
+        success: true,
+        comprehensive: result.comprehensive,
+        dataQuality: result.dataQuality,
+        message: "Brand kit regenerated from analysis (user edits preserved)",
+      });
+    } catch (error: any) {
+      console.error("Error regenerating from analysis:", error.message);
+      if (error.message.includes('not found')) {
+        return res.status(404).json({ error: error.message });
+      }
+      return res.status(500).json({ error: error.message });
+    }
+  }
+
+  // ============================================
+  // LEGACY ENDPOINTS (for backwards compatibility)
+  // ============================================
+
   static createBrandKitFromProfile = async (req: Request, res: Response) => {
     try {
       const user: any = req.user;
@@ -34,13 +244,13 @@ export default class BrandKitController {
       const files = req.files as { [fieldname: string]: Express.Multer.File[] };
       const kitDataJson = JSON.parse(req.body.kit_data_json);
 
-      const user:any = req.user;
+      const user: any = req.user;
       if (!req.user) {
-      return res.status(401).json({ error: "Unauthorized" });
-     }
+        return res.status(401).json({ error: "Unauthorized" });
+      }
       const userId = user.userId;
-      const brandProfileId = (req.body.brandProfileId);
-      console.log("userId and brandProfileId",userId,brandProfileId);
+      const brandProfileId = req.body.brandProfileId;
+      
       if (!userId || !brandProfileId) {
         return res.status(400).json({ error: "userId and brandProfileId are required" });
       }
@@ -64,7 +274,6 @@ export default class BrandKitController {
     }
   };
 
-  // NEW: Get brand kit by profile ID
   static async getBrandKitByProfileId(req: Request, res: Response) {
     try {
       const user: any = req.user;
@@ -79,7 +288,6 @@ export default class BrandKitController {
 
       const brandKit = await BrandKitsService.getBrandKitByProfileId(profileId);
 
-      // If null, it means data exists but needs re-analysis
       if (brandKit === null) {
         return res.status(202).json({
           message: "Brand kit data exists but needs transformation. Call /re-analyze endpoint.",
@@ -92,7 +300,6 @@ export default class BrandKitController {
         return res.status(404).json({ message: "Brand Kit not found" });
       }
 
-      // Return formatted response
       return BrandKitController.formatBrandKitResponse(res, brandKit, includeRaw);
     } catch (error: any) {
       if (error.message.includes('not found')) {
@@ -104,13 +311,12 @@ export default class BrandKitController {
 
   static async getBrandKit(req: Request, res: Response) {
     try {
-      const user:any = req.user;
+      const user: any = req.user;
       if (!req.user) {
-      return res.status(401).json({ error: "Unauthorized" });
-     }
-      const userId = user.userId;
+        return res.status(401).json({ error: "Unauthorized" });
+      }
       const kitId = req.params.kit_id;
-      const includeRaw = req.query.include_raw === 'true'; // Optional: include v2_raw for debug
+      const includeRaw = req.query.include_raw === 'true';
 
       console.log("Getting brand kit by kit ID", { kitId, includeRaw });
 
@@ -120,7 +326,6 @@ export default class BrandKitController {
         return res.status(404).json({ message: "Brand Kit not found" });
       }
 
-      // Return formatted response
       return BrandKitController.formatBrandKitResponse(res, brandKit, includeRaw);
     } catch (error: any) {
       if (error.message.includes('not found')) {
@@ -130,17 +335,10 @@ export default class BrandKitController {
     }
   }
 
-  // Helper method to format brand kit response
   private static formatBrandKitResponse(res: Response, brandKit: any, includeRaw: boolean) {
-    // Transform response: comprehensive is primary, v2_raw is optional
-    // Handle both new format (with comprehensive) and legacy format
     if (brandKit.comprehensive) {
-      // New format: comprehensive is primary
       const response: any = {
-        // Primary: comprehensive brand kit structure (spread at root level)
-        // This makes all sections (meta, visual_identity, etc.) available at root
         ...brandKit.comprehensive,
-        // Metadata
         _meta: {
           format_version: brandKit.format_version || '2.0',
           source: brandKit.source,
@@ -148,7 +346,6 @@ export default class BrandKitController {
         }
       };
 
-      // Include brand scores and roadmap from v2_raw if available (needed for UI)
       if (brandKit.v2_raw) {
         if (brandKit.v2_raw.brand_scores) {
           response._scores = brandKit.v2_raw.brand_scores;
@@ -158,7 +355,6 @@ export default class BrandKitController {
         }
       }
 
-      // Only include full v2_raw if explicitly requested (for debug/advanced views)
       if (includeRaw && brandKit.v2_raw) {
         response._debug = {
           v2_raw: brandKit.v2_raw
@@ -167,8 +363,7 @@ export default class BrandKitController {
 
       return res.status(200).json(response);
     } else {
-      // Legacy format: return as-is but warn
-      console.warn('⚠️ Legacy brand kit format detected - missing comprehensive structure');
+      console.warn('⚠️ Legacy brand kit format detected');
       return res.status(200).json({
         ...brandKit,
         _meta: {
@@ -180,7 +375,6 @@ export default class BrandKitController {
     }
   }
 
-  // NEW: Create brand kit manually (without AI analysis)
   static createManualBrandKit = async (req: Request, res: Response) => {
     try {
       const user: any = req.user;
@@ -191,8 +385,6 @@ export default class BrandKitController {
       const userId = user.userId;
       const { kitData } = req.body;
       
-      console.log("Creating manual brand kit", { userId });
-      
       if (!userId) {
         return res.status(400).json({ error: "userId is required" });
       }
@@ -201,7 +393,6 @@ export default class BrandKitController {
         return res.status(400).json({ error: "kitData.comprehensive is required" });
       }
 
-      // Validate required fields
       if (!kitData.comprehensive.meta?.brand_name?.value) {
         return res.status(400).json({ error: "brand_name is required" });
       }
@@ -221,14 +412,12 @@ export default class BrandKitController {
     }
   };
 
-   static async getBrandKitReport(req: Request, res: Response) {
+  static async getBrandKitReport(req: Request, res: Response) {
     try {
-      console.log("inside the getBrandKitReport")
-      const user:any = req.user;
+      const user: any = req.user;
       if (!req.user) {
-      return res.status(401).json({ error: "Unauthorized" });
-     }
-      const userId = user.userId;
+        return res.status(401).json({ error: "Unauthorized" });
+      }
       const kitId = req.params.kit_id;
       const reportHtml = await BrandKitsService.fetchBrandKitReport(kitId);
 

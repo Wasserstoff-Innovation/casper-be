@@ -85,11 +85,10 @@ static getJobStatus = async (req: Request, res: Response) => {
     const { profile_id } = req.params;
     if (!profile_id) return res.status(400).json({ message: 'profile_id required' });
 
-    // Use optimized summary view
-    // This reduces payload from 400KB to 10-50KB
-    console.log("Using optimized summary view for profile:", profile_id);
-    const summaryView = await BrandIntelligenceService.getSummaryView(profile_id);
-    return res.status(200).json(summaryView);
+    // Return Python v2 flat structure directly (no transformation, no duplication)
+    console.log("Fetching raw Python v2 profile data:", profile_id);
+    const profileData = await BrandProfileService.getRawProfileData(profile_id);
+    return res.status(200).json(profileData);
   } catch (err: any) {
     res.status(500).json({ message: err.message });
   }
@@ -173,10 +172,11 @@ static getDetailView = async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Invalid profile ID" });
     }
 
-    console.log("Getting brand intelligence detail for profile:", profileId);
+    console.log("Getting brand profile detail (Python v2 raw data):", profileId);
 
-    const detailView = await BrandIntelligenceService.getDetailView(profileId);
-    res.status(200).json(detailView);
+    // Use unified getRawProfileData - NO transformation, NO duplication
+    const profileData = await BrandProfileService.getRawProfileData(profileId);
+    res.status(200).json(profileData);
   } catch (err: any) {
     console.error("Error getting detail view:", err);
     res.status(500).json({ error: err.message });
@@ -205,7 +205,7 @@ static listProfiles = async (req: Request, res: Response) => {
 
     console.log("Listing profiles for user:", userId, "with filters:", filters);
 
-    const result = await BrandIntelligenceService.listProfiles(userId, filters, sort, order, limit, offset);
+    const result = await BrandProfileService.listProfiles(userId, filters, sort, order, limit, offset);
     res.status(200).json(result);
   } catch (err: any) {
     console.error("Error listing profiles:", err);

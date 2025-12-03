@@ -371,14 +371,14 @@ export class BrandDataExtractor {
       : getValue<string>(kit.meta.industry) || 'General audience';
 
     // Visual Identity - Colors
-    const primaryColors = getArray<any>(kit.visual_identity.color_system.primary_colors);
+    const primaryColors = getArray<any>(kit.visual_identity.color_system?.primary_colors);
     const primaryColorHex = primaryColors.length > 0 ? primaryColors[0].hex : '#000000';
-    const secondaryColors = getArray<any>(kit.visual_identity.color_system.secondary_colors)
+    const secondaryColors = getArray<any>(kit.visual_identity.color_system?.secondary_colors)
       .map(c => c.hex);
 
     // Typography
-    const headingFont = getValue<any>(kit.visual_identity.typography.heading_font);
-    const bodyFont = getValue<any>(kit.visual_identity.typography.body_font);
+    const headingFont = getValue<any>(kit.visual_identity.typography?.heading_font);
+    const bodyFont = getValue<any>(kit.visual_identity.typography?.body_font);
     const primaryFont = headingFont?.name || bodyFont?.name;
     const secondaryFont = bodyFont?.name || headingFont?.name;
 
@@ -386,8 +386,8 @@ export class BrandDataExtractor {
     const logoUrl = getValue<string>(kit.visual_identity.logos.primary_logo_url);
 
     // Tone & Voice
-    const toneAdjectives = getArray<string>(kit.verbal_identity.tone_of_voice.adjectives);
-    const toneGuidance = getValue<string>(kit.verbal_identity.tone_of_voice.guidance);
+    const toneAdjectives = getArray<string>(kit.verbal_identity.tone_of_voice?.adjectives);
+    const toneGuidance = getValue<string>(kit.verbal_identity.tone_of_voice?.guidance);
     const brandPersonality = getValue<string>(kit.verbal_identity.brand_personality) || 
       toneAdjectives.join(', ');
     const writingStyle = toneGuidance || 'Professional and clear';
@@ -412,8 +412,8 @@ export class BrandDataExtractor {
     const contentFocus = keyMessages.join(', ');
 
     // Imagery Style
-    const imageryStyle = getValue<string>(kit.visual_identity.imagery.style_type);
-    const illustrationStyle = getValue<string>(kit.visual_identity.imagery.illustration_style);
+    const imageryStyle = getValue<string>(kit.visual_identity.imagery?.style_type);
+    const illustrationStyle = getValue<string>(kit.visual_identity.imagery?.illustration_style);
     const photographyStyle = imageryStyle === 'photography' ? 'Professional' : undefined;
     const moodTone = toneAdjectives.join(', ');
 
@@ -568,11 +568,11 @@ export class BrandDataExtractor {
     if (!getValue(kit.meta.brand_name)) missing.push('brand_name');
     else available.push('brand_name');
 
-    if (!getArray(kit.visual_identity.color_system.primary_colors)) missing.push('primary_colors');
+    if (!getArray(kit.visual_identity.color_system?.primary_colors)) missing.push('primary_colors');
     else available.push('primary_colors');
 
-    if (!getValue(kit.verbal_identity.tone_of_voice.guidance) && 
-        !getArray(kit.verbal_identity.tone_of_voice.adjectives)) {
+    if (!getValue(kit.verbal_identity.tone_of_voice?.guidance) &&
+        !getArray(kit.verbal_identity.tone_of_voice?.adjectives)) {
       missing.push('tone_of_voice');
     } else {
       available.push('tone_of_voice');

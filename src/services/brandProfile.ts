@@ -248,7 +248,239 @@ static async getBrandProfileJobStatus(jobId: string) {
   }
 }
 
-// Get Brand Profile
+// List Profiles (Python v2 flat structure - lightweight for list view)
+static async listProfiles(
+  userId: string,
+  filters: {
+    persona?: string;
+    minScore?: number;
+    entityType?: string;
+    status?: string;
+  },
+  sort: string = 'created_at',
+  order: 'asc' | 'desc' = 'desc',
+  limit: number = 20,
+  offset: number = 0
+) {
+  try {
+    // Build query
+    const query: any = { userId: userId.toString() };
+
+    if (filters.persona) query.persona = filters.persona;
+    if (filters.minScore !== undefined) query['scores.overall'] = { $gte: filters.minScore };
+    if (filters.entityType) query.type = filters.entityType;
+
+    // Build sort
+    const sortObj: any = {};
+    const sortField = sort === 'overall_score' ? 'scores.overall' :
+                      sort === 'brand_name' ? 'name' :
+                      'created_at';
+    sortObj[sortField] = order === 'asc' ? 1 : -1;
+
+    // Fetch profiles
+    const profiles = await BrandProfile.find(query)
+      .sort(sortObj)
+      .skip(offset)
+      .limit(limit)
+      .lean();
+
+    const total = await BrandProfile.countDocuments(query);
+
+    // Fetch brand kits for these profiles to get the actual data (SINGLE SOURCE OF TRUTH)
+    const profileIds = profiles.map((p: any) => p._id.toString());
+    const brandKits = await BrandKit.find({
+      $or: [
+        { profileId: { $in: profileIds } },
+        { brandProfileId: { $in: profileIds.map((id: string) => toObjectId(id)) } }
+      ]
+    }).lean();
+
+    // Create a map of profileId -> brandKit for quick lookup
+    const brandKitMap = new Map<string, any>();
+    for (const kit of brandKits) {
+      const profileId = kit.profileId || kit.brandProfileId?.toString();
+      if (profileId) {
+        brandKitMap.set(profileId, kit);
+      }
+    }
+
+    // Build list items with data from BOTH profile AND brand kit
+    const listItems = profiles.map((p: any) => {
+      const profileId = p._id.toString();
+      const brandKit = brandKitMap.get(profileId);
+      const comprehensive = brandKit?.comprehensive;
+
+      // Get brand name from: comprehensive > brandKit.brand_name > profile.name
+      const brandName = comprehensive?.meta?.brand_name?.value ||
+                        brandKit?.brand_name ||
+                        p.name ||
+                        null;
+
+      // Get logo from: comprehensive > profile.logo_url
+      const logoUrl = comprehensive?.visual_identity?.logos?.primary_logo_url?.value ||
+                      p.logo_url ||
+                      null;
+
+      // Get scores
+      const overallScore = p.scores?.overall ?? p.overall_score ?? null;
+      const scores = p.scores || null;
+
+      // Get persona
+      const persona = p.persona || null;
+      const personaLabel = persona ? persona.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()) : null;
+
+      // Get type/business model
+      const entityType = p.type || comprehensive?.meta?.company_type?.value || null;
+      const businessModel = p.business_model || null;
+
+      // Calculate completeness
+      let completeness = p.completeness_score || 0;
+      if (comprehensive && !p.completeness_score) {
+        // Quick completeness calculation based on key fields
+        const keyFields = [
+          comprehensive?.meta?.brand_name?.value,
+          comprehensive?.visual_identity?.logos?.primary_logo_url?.value,
+          comprehensive?.visual_identity?.color_system?.primary_colors?.items?.length,
+          comprehensive?.verbal_identity?.tagline?.value,
+          comprehensive?.verbal_identity?.elevator_pitch?.value,
+        ];
+        const filledCount = keyFields.filter(Boolean).length;
+        completeness = Math.round((filledCount / keyFields.length) * 100);
+      }
+
+      // Get roadmap summary
+      const roadmapTotal = p.roadmap?.total_count || 0;
+      const roadmapCompleted = p.roadmap?.tasks?.filter((t: any) => t.status === 'completed').length || 0;
+
+      return {
+        id: profileId,
+        domain: p.domain || 'unknown',
+        brandName,
+        logo: logoUrl,
+        personaId: persona,
+        personaLabel,
+        entityType,
+        businessModel,
+        overallScore,
+        scores,
+        completeness,
+        roadmap: {
+          total: roadmapTotal,
+          completed: roadmapCompleted,
+          percentage: roadmapTotal > 0 ? Math.round((roadmapCompleted / roadmapTotal) * 100) : 0
+        },
+        createdAt: p.created_at,
+        updatedAt: p.updated_at
+      };
+    });
+
+    return { profiles: listItems, total };
+  } catch (error: any) {
+    console.error('Error listing profiles:', error.message);
+    throw error;
+  }
+}
+
+// Get Raw Profile Data (Python v2 flat structure - NO transformation, NO duplication)
+static async getRawProfileData(profileId: string) {
+  try {
+    // Fetch from brand_profiles collection (by _id)
+    const profile = await BrandProfile.findById(profileId).lean();
+
+    if (!profile) {
+      throw new Error(`Brand profile not found for profileId: ${profileId}`);
+    }
+
+    // Fetch from brand_kits collection (by profileId string that Python uses)
+    const brandKit = await BrandKit.findOne({ 
+      $or: [
+        { profileId: profile.profileId },
+        { brandProfileId: profile._id }
+      ]
+    }).lean();
+
+    // Fetch from brand_social_profiles collection
+    const socialProfiles = await BrandSocialProfile.findOne({
+      $or: [
+        { brandProfileId: profile.profileId },
+        { brandProfileId: profile._id.toString() }
+      ]
+    }).lean();
+
+    // Return EXACTLY the Python v2 schema structure (flat, no nesting)
+    return {
+      // From brand_profiles collection
+      _id: profile._id,
+      userId: profile.userId,
+      jobId: profile.jobId,
+      profileId: profile.profileId,
+      
+      // Basic Info
+      name: profile.name,
+      domain: profile.domain,
+      url: profile.url,
+      type: profile.type,
+      business_model: profile.business_model,
+      persona: profile.persona,
+      
+      // Visual Identity (quick access)
+      logo_url: profile.logo_url,
+      favicon_url: profile.favicon_url,
+      primary_colors: profile.primary_colors,
+      heading_font: profile.heading_font,
+      body_font: profile.body_font,
+      
+      // Verbal Identity
+      elevator_pitch_one_liner: profile.elevator_pitch_one_liner,
+      value_proposition: profile.value_proposition,
+      brand_story: profile.brand_story,
+      tone_voice: profile.tone_voice,
+      
+      // Target Audience
+      target_customer_profile: profile.target_customer_profile,
+      the_problem_it_solves: profile.the_problem_it_solves,
+      the_transformation_outcome: profile.the_transformation_outcome,
+      
+      // Scores (0-100)
+      scores: profile.scores,
+      
+      // Roadmap Tasks
+      roadmap: profile.roadmap,
+      
+      // Timestamps
+      created_at: profile.created_at,
+      
+      // Brand Kit (from brand_kits collection) - if exists
+      brand_kit: brandKit ? {
+        _id: brandKit._id,
+        visual_identity: brandKit.visual_identity,
+        verbal_identity: brandKit.verbal_identity,
+        proof_trust: brandKit.proof_trust,
+        seo: brandKit.seo,
+        content: brandKit.content,
+        conversion: brandKit.conversion,
+        product: brandKit.product,
+        generated_at: brandKit.generated_at,
+        
+        // Include comprehensive if it exists (unified editing structure)
+        comprehensive: brandKit.comprehensive || null
+      } : null,
+      
+      // Social Profiles (from brand_social_profiles collection) - if exists
+      social_profiles: socialProfiles ? {
+        profiles: socialProfiles.profiles,
+        platforms_found: socialProfiles.platforms_found,
+        total_found: socialProfiles.total_found,
+        total_platforms: socialProfiles.total_platforms
+      } : null
+    };
+  } catch (error: any) {
+    console.error('Error fetching raw profile data:', error.message);
+    throw error;
+  }
+}
+
+// Get Brand Profile (Legacy - for backward compatibility)
 // NOTE: Python backend writes directly to MongoDB, so we just read from DB
 static async getBrandProfile(profileId: string) {
   try {
