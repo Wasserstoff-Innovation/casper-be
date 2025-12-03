@@ -1,5 +1,5 @@
 import axios from "axios";
-import { BrandProfile, BrandKit, BrandRoadmapCampaign, BrandRoadmapTask, BrandSocialProfile } from "../models";
+import { BrandProfile, BrandKit, BrandRoadmapCampaign, BrandRoadmapTask, BrandSocialProfile, BrandIntelligenceJob } from "../models";
 import { Types } from "mongoose";
 import { envConfigs } from "../config/envConfig";
 import { BrandKitTransformer } from "./brandKitTransformer";
@@ -286,7 +286,7 @@ static async listProfiles(
 
     const total = await BrandProfile.countDocuments(query);
 
-    // Fetch brand kits for these profiles to get the actual data (SINGLE SOURCE OF TRUTH)
+    // Fetch brand kits for these profiles (SINGLE SOURCE OF TRUTH for brand data)
     const profileIds = profiles.map((p: any) => p._id.toString());
     const brandKits = await BrandKit.find({
       $or: [
@@ -295,48 +295,109 @@ static async listProfiles(
       ]
     }).lean();
 
-    // Create a map of profileId -> brandKit for quick lookup
+    // Fetch intelligence jobs for these profiles (classification, snapshot, dataQuality)
+    const jobIds = profiles.map((p: any) => p.jobId).filter(Boolean);
+    const domains = profiles.map((p: any) => p.domain).filter(Boolean);
+    const intelligenceJobs = await BrandIntelligenceJob.find({
+      $or: [
+        { _id: { $in: jobIds.map((id: string) => toObjectId(id)) } },
+        { profileId: { $in: profileIds } },
+        { url: { $regex: domains.map((d: string) => d.replace(/\./g, '\\.')).join('|'), $options: 'i' } }
+      ],
+      status: 'complete'
+    }).sort({ completed_at: -1 }).lean();
+
+    // Create maps for quick lookup
     const brandKitMap = new Map<string, any>();
     for (const kit of brandKits) {
-      const profileId = kit.profileId || kit.brandProfileId?.toString();
-      if (profileId) {
-        brandKitMap.set(profileId, kit);
+      const pid = kit.profileId || kit.brandProfileId?.toString();
+      if (pid) brandKitMap.set(pid, kit);
+    }
+
+    const jobMap = new Map<string, any>();
+    for (const job of intelligenceJobs) {
+      // Map by profileId first
+      if (job.profileId) {
+        if (!jobMap.has(job.profileId)) jobMap.set(job.profileId, job);
+      }
+      // Also map by domain extracted from URL
+      if (job.url) {
+        try {
+          const domain = new URL(job.url).hostname.replace('www.', '');
+          if (!jobMap.has(domain)) jobMap.set(domain, job);
+        } catch {}
       }
     }
 
-    // Build list items with data from BOTH profile AND brand kit
+    // Build list items with data from ALL THREE collections
     const listItems = profiles.map((p: any) => {
       const profileId = p._id.toString();
       const brandKit = brandKitMap.get(profileId);
       const comprehensive = brandKit?.comprehensive;
 
-      // Get brand name from: comprehensive > brandKit.brand_name > profile.name
+      // Find job by profileId or domain
+      const job = jobMap.get(profileId) || jobMap.get(p.domain?.replace('www.', ''));
+      const classification = (job as any)?.classification;
+      const snapshot = (job as any)?.snapshot;
+      const jobDataQuality = (job as any)?.dataQuality;
+
+      // ===== BRAND NAME =====
       const brandName = comprehensive?.meta?.brand_name?.value ||
                         brandKit?.brand_name ||
+                        (job as any)?.brand?.name ||
                         p.name ||
                         null;
 
-      // Get logo from: comprehensive > profile.logo_url
+      // ===== LOGO =====
       const logoUrl = comprehensive?.visual_identity?.logos?.primary_logo_url?.value ||
                       p.logo_url ||
+                      (job as any)?.brand?.logo_url ||
                       null;
 
-      // Get scores
-      const overallScore = p.scores?.overall ?? p.overall_score ?? null;
-      const scores = p.scores || null;
+      // ===== FAVICON =====
+      const faviconUrl = comprehensive?.visual_identity?.logos?.favicon_url?.value ||
+                         (job as any)?.brand?.favicon_url ||
+                         null;
 
-      // Get persona
-      const persona = p.persona || null;
-      const personaLabel = persona ? persona.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()) : null;
+      // ===== CLASSIFICATION (from job) =====
+      const entityType = classification?.entity_type ||
+                         p.type ||
+                         comprehensive?.meta?.company_type?.value ||
+                         null;
 
-      // Get type/business model
-      const entityType = p.type || comprehensive?.meta?.company_type?.value || null;
-      const businessModel = p.business_model || null;
+      const businessModel = classification?.business_model ||
+                            p.business_model ||
+                            null;
 
-      // Calculate completeness
+      const persona = classification?.persona_id ||
+                      p.persona ||
+                      null;
+
+      const personaLabel = persona
+        ? persona.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())
+        : null;
+
+      const classificationConfidence = classification?.confidence || null;
+
+      // ===== SCORES =====
+      const scores = p.scores || (job as any)?.scores || null;
+      const overallScore = scores?.overall ?? p.overall_score ?? null;
+
+      // ===== COMPLETENESS & DATA QUALITY =====
       let completeness = p.completeness_score || 0;
-      if (comprehensive && !p.completeness_score) {
-        // Quick completeness calculation based on key fields
+      let dataQuality = null;
+
+      if (jobDataQuality) {
+        completeness = jobDataQuality.completeness || jobDataQuality.overallQuality || completeness;
+        dataQuality = {
+          completeness: jobDataQuality.completeness,
+          accuracy: jobDataQuality.accuracy,
+          freshness: jobDataQuality.freshness,
+          overallQuality: jobDataQuality.overallQuality,
+          averageConfidence: jobDataQuality.averageConfidence
+        };
+      } else if (comprehensive && !p.completeness_score) {
+        // Fallback: Quick completeness calculation
         const keyFields = [
           comprehensive?.meta?.brand_name?.value,
           comprehensive?.visual_identity?.logos?.primary_logo_url?.value,
@@ -348,29 +409,86 @@ static async listProfiles(
         completeness = Math.round((filledCount / keyFields.length) * 100);
       }
 
-      // Get roadmap summary
+      // ===== SNAPSHOT (strengths, risks, field counts) =====
+      const snapshotData = snapshot ? {
+        strengths: snapshot.strengths || [],
+        risks: snapshot.risks || [],
+        fieldsFound: snapshot.fieldsFound || 0,
+        fieldsInferred: snapshot.fieldsInferred || 0,
+        fieldsMissing: snapshot.fieldsMissing || 0,
+        totalFields: snapshot.totalFields || 0,
+        overallCompleteness: snapshot.overallCompleteness || completeness,
+        sectionCompleteness: snapshot.sectionCompleteness || {}
+      } : null;
+
+      // ===== CRITICAL GAPS =====
+      const criticalGaps = (job as any)?.criticalGaps || [];
+      const criticalGapsCount = criticalGaps.length;
+      const topCriticalGaps = criticalGaps.slice(0, 3).map((g: any) => ({
+        field: g.field,
+        fieldLabel: g.fieldLabel,
+        impact: g.impact
+      }));
+
+      // ===== ROADMAP =====
       const roadmapTotal = p.roadmap?.total_count || 0;
       const roadmapCompleted = p.roadmap?.tasks?.filter((t: any) => t.status === 'completed').length || 0;
+      const quickWinsCount = p.roadmap?.quick_wins_count || 0;
+
+      // ===== TAGLINE & ELEVATOR PITCH (quick preview) =====
+      const tagline = comprehensive?.verbal_identity?.tagline?.value || null;
+      const elevatorPitch = comprehensive?.verbal_identity?.elevator_pitch?.value || null;
+
+      // ===== PRIMARY COLORS (for visual preview) =====
+      const primaryColors = comprehensive?.visual_identity?.color_system?.primary_colors?.items?.map((c: any) => c.hex) || [];
 
       return {
         id: profileId,
         domain: p.domain || 'unknown',
+        url: p.url || `https://${p.domain}`,
+
+        // Brand basics
         brandName,
         logo: logoUrl,
+        favicon: faviconUrl,
+        tagline,
+        elevatorPitch,
+        primaryColors: primaryColors.slice(0, 5),
+
+        // Classification
         personaId: persona,
         personaLabel,
         entityType,
         businessModel,
+        classificationConfidence,
+
+        // Scores
         overallScore,
         scores,
+
+        // Data quality
         completeness,
+        dataQuality,
+
+        // Snapshot (strengths/risks)
+        snapshot: snapshotData,
+
+        // Critical gaps
+        criticalGapsCount,
+        topCriticalGaps,
+
+        // Roadmap
         roadmap: {
           total: roadmapTotal,
           completed: roadmapCompleted,
+          quickWins: quickWinsCount,
           percentage: roadmapTotal > 0 ? Math.round((roadmapCompleted / roadmapTotal) * 100) : 0
         },
+
+        // Timestamps
         createdAt: p.created_at,
-        updatedAt: p.updated_at
+        updatedAt: p.updated_at,
+        analyzedAt: (job as any)?.completed_at || null
       };
     });
 
