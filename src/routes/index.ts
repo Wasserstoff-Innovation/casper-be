@@ -2,7 +2,6 @@ import auth from "./auth";
 import express from "express";
 import brandProfile from "./brandProfile";
 import brandKit from "./brandKit";
-import path from "path";
 import visit from "./visited";
 import campaign from "./campaign";
 import calendar from "./calendar";
@@ -29,11 +28,11 @@ const defaultRoutes = [
     route: visit
   },
   {
-    path: "/campaigns",
+    path: "/v1/brands",
     route: campaign
   },
   {
-    path: "/calendar",
+    path: "/v1/calendars",
     route: calendar
   },
   {

@@ -1,148 +1,99 @@
 import axios from "axios";
-import { BrandProfile, CampaignPlan } from "../models";
+import { BrandProfile } from "../models";
 import { envConfigs } from "../config/envConfig";
-import { toObjectId } from '../utils/mongoHelpers';
 
-const API_BASE_URL = `${envConfigs.aiBackendUrl}/v1/campaigns`;
+const API_BASE_URL = `${envConfigs.aiBackendUrl}/v1/brands`;
 
 export class CampaignPlanService {
 
-  static async createChat(userId: number, payload: any) {
+  /**
+   * Verify brand profile exists locally
+   */
+  private static async verifyBrandProfile(brandId: string) {
+    let brandProfile = await BrandProfile.findOne({ profileId: brandId }).lean();
+    if (!brandProfile) {
+      brandProfile = await BrandProfile.findById(brandId).lean();
+    }
+    if (!brandProfile) {
+      throw new Error("Brand profile not found");
+    }
+    return brandProfile;
+  }
+
+  /**
+   * GET /api/v1/brands/:brand_id/recommendations/chat
+   * Get existing recommendations or generate new ones
+   */
+  static async getRecommendationsChat(brandId: string) {
     try {
-      console.log("payload.......text.",payload)
-      const generateStructuredData:any = await axios.post(
-        `${API_BASE_URL}/parse-from-text`,
+      await this.verifyBrandProfile(brandId);
+
+      const response = await axios.get(
+        `${API_BASE_URL}/${brandId}/recommendations/chat`
+      );
+
+      return response.data;
+    } catch (error: any) {
+      console.error("Error getting recommendations chat:", error.response?.data || error.message);
+      if (error.message === "Brand profile not found") {
+        throw error;
+      }
+      throw new Error(
+        error.response?.data?.detail || error.message || "Failed to get recommendations"
+      );
+    }
+  }
+
+  /**
+   * POST /api/v1/brands/:brand_id/recommendations/chat
+   * Send a message to refine recommendations
+   */
+  static async postRecommendationsChat(
+    brandId: string,
+    message: string,
+    focusRecommendationId?: string
+  ) {
+    try {
+      await this.verifyBrandProfile(brandId);
+
+      const payload: any = { message };
+      if (focusRecommendationId) {
+        payload.focus_recommendation_id = focusRecommendationId;
+      }
+
+      const response = await axios.post(
+        `${API_BASE_URL}/${brandId}/recommendations/chat`,
         payload
       );
-      console.log("generateStructuredData........",generateStructuredData)
-      generateStructuredData.data.brand_profile_id = payload.brand_profile_id;
-      // console.log("campaignData........",generateStructuredData)
-    return generateStructuredData?.data;
+
+      return response.data;
     } catch (error: any) {
-      console.error("Error creating campaign plan:", error.response?.data || error.message);
-      throw new Error(error.response?.data?.detail[0].msg || error.message || "Unknown error");
-    }
-  }
-static async createCampaignPlan(userId: number, payload: any) {
-  try {
-    const brandProfileRecord = await BrandProfile.findOne({
-      profileId: payload.brand_profile_id
-    });
-
-    if (!brandProfileRecord) {
-      return { message: "Brand profile not found" };
-    }
-
-    const existingPlan = await CampaignPlan.findOne({
-      brandProfileId: brandProfileRecord._id
-    });
-
-    if (existingPlan) {
-      return {
-        message: "Campaign plan already exists for this brand profile",
-        existingPlan: existingPlan,
-      };
-    }
-
-    const response = await axios.post(`${API_BASE_URL}`, payload);
-    const campaignData = response.data;
-
-    const newPlan = await CampaignPlan.create({
-      userId: toObjectId(userId),
-      brandProfileId: brandProfileRecord._id,
-      campaignId: campaignData._id,
-      data: campaignData,
-    });
-
-    const result = newPlan.toObject();
-    (result as any).brandProfileId = payload.brand_profile_id;
-
-    return {
-      message: "New campaign plan created successfully",
-      data: result,
-    };
-
-  } catch (error: any) {
-    console.error("Error creating campaign plan:", error.response?.data || error.message);
-    return {
-      message: error.response?.data?.detail?.[0]?.msg || error.message || "Unknown error",
-      status: "error",
-    };
-  }
-}
-
-
-
-  static async getCampaignPlan(campaignPlanId:string) {
-    try {
-      console.log("campaignPlanId........",campaignPlanId)
-      const response = await axios.get(`${API_BASE_URL}/${campaignPlanId}`);
-      const campaignData = response.data;
-      console.log("campaignData........",campaignData)
-      return campaignData;
-    } catch (error:any) {
-      console.error("Error getting campaign plan:", error.response?.data || error.message);
-    }
-  }
-
- static async getAiRecommendations(campaignPlanId: string) {
-  try {
-    console.log("campaignPlanId........", campaignPlanId);
-
-    // API expects POST not GET
-    const response = await axios.post(
-      `${API_BASE_URL}/${campaignPlanId}/recommendations`
-    );
-    const recommendations = response.data;
-    // console.log("recommendations........", recommendations);
-    return recommendations;
-  } catch (error: any) {
-    console.error(
-      "Error getting campaign recommendations:",
-      error.response?.data || error.message
-    );
-    throw new Error(
-      error.response?.data?.detail || error.message || "Unknown error"
-    );
-  }
-}
-
-static async finalizeCampaignPlan(
-  campaignPlanId: string,
-  payload: { selected_platforms: string[]; selected_duration_weeks: number }
-) {
-  try {
-    console.log("Finalizing campaign plan:", campaignPlanId, payload);
-
-    const response = await axios.post(
-      `${API_BASE_URL}/${campaignPlanId}/finalize`,
-      payload,
-      { headers: { "Content-Type": "application/json" } }
-    );
-   
-    const finalizedPlan = response.data;
-    // console.log("Finalized Plan Response:", finalizedPlan);
-    if(finalizedPlan.plan_status ){
-      //update plan_status in campaignPlans table
-      await CampaignPlan.findOneAndUpdate(
-        { campaignId: campaignPlanId },
-        { data: { ...finalizedPlan, plan_status: finalizedPlan.plan_status } },
-        { new: true }
+      console.error("Error posting recommendations chat:", error.response?.data || error.message);
+      if (error.message === "Brand profile not found") {
+        throw error;
+      }
+      throw new Error(
+        error.response?.data?.detail || error.message || "Failed to refine recommendations"
       );
     }
-
-    return finalizedPlan;
-  } catch (error: any) {
-    console.error(
-      "Error finalizing campaign plan:",
-      error.response?.data || error.message
-    );
-    throw new Error(
-      error.response?.data?.detail ||
-        error.message ||
-        "Unknown error while finalizing campaign plan"
-    );
   }
-}
 
+  /**
+   * DELETE /api/v1/brands/:brand_id/recommendations
+   * Reset recommendations to start fresh
+   */
+  static async deleteRecommendations(brandId: string) {
+    try {
+      const response = await axios.delete(
+        `${API_BASE_URL}/${brandId}/recommendations`
+      );
+
+      return response.data;
+    } catch (error: any) {
+      console.error("Error deleting recommendations:", error.response?.data || error.message);
+      throw new Error(
+        error.response?.data?.detail || error.message || "Failed to delete recommendations"
+      );
+    }
+  }
 }
