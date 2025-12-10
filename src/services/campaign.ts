@@ -4,96 +4,106 @@ import { envConfigs } from "../config/envConfig";
 
 const API_BASE_URL = `${envConfigs.aiBackendUrl}/v1/brands`;
 
-export class CampaignPlanService {
+export class CampaignService {
 
-  /**
-   * Verify brand profile exists locally
-   */
-  private static async verifyBrandProfile(brandId: string) {
-    let brandProfile = await BrandProfile.findOne({ profileId: brandId }).lean();
-    if (!brandProfile) {
-      brandProfile = await BrandProfile.findById(brandId).lean();
-    }
-    if (!brandProfile) {
-      throw new Error("Brand profile not found");
-    }
-    return brandProfile;
-  }
+  // ============================================
+  // RECOMMENDATIONS CHAT
+  // ============================================
 
-  /**
-   * GET /api/v1/brands/:brand_id/recommendations/chat
-   * Get existing recommendations or generate new ones
-   */
   static async getRecommendationsChat(brandId: string) {
-    try {
-      await this.verifyBrandProfile(brandId);
-
-      const response = await axios.get(
-        `${API_BASE_URL}/${brandId}/recommendations/chat`
-      );
-
-      return response.data;
-    } catch (error: any) {
-      console.error("Error getting recommendations chat:", error.response?.data || error.message);
-      if (error.message === "Brand profile not found") {
-        throw error;
-      }
-      throw new Error(
-        error.response?.data?.detail || error.message || "Failed to get recommendations"
-      );
-    }
+    const response = await axios.get(`${API_BASE_URL}/${brandId}/recommendations/chat`);
+    return response.data;
   }
 
-  /**
-   * POST /api/v1/brands/:brand_id/recommendations/chat
-   * Send a message to refine recommendations
-   */
-  static async postRecommendationsChat(
-    brandId: string,
-    message: string,
-    focusRecommendationId?: string
-  ) {
-    try {
-      await this.verifyBrandProfile(brandId);
-
-      const payload: any = { message };
-      if (focusRecommendationId) {
-        payload.focus_recommendation_id = focusRecommendationId;
-      }
-
-      const response = await axios.post(
-        `${API_BASE_URL}/${brandId}/recommendations/chat`,
-        payload
-      );
-
-      return response.data;
-    } catch (error: any) {
-      console.error("Error posting recommendations chat:", error.response?.data || error.message);
-      if (error.message === "Brand profile not found") {
-        throw error;
-      }
-      throw new Error(
-        error.response?.data?.detail || error.message || "Failed to refine recommendations"
-      );
+  static async postRecommendationsChat(brandId: string, message: string, focusRecommendationId?: string) {
+    const payload: any = { message };
+    if (focusRecommendationId) {
+      payload.focus_recommendation_id = focusRecommendationId;
     }
+    const response = await axios.post(`${API_BASE_URL}/${brandId}/recommendations/chat`, payload);
+    return response.data;
   }
 
-  /**
-   * DELETE /api/v1/brands/:brand_id/recommendations
-   * Reset recommendations to start fresh
-   */
   static async deleteRecommendations(brandId: string) {
-    try {
-      const response = await axios.delete(
-        `${API_BASE_URL}/${brandId}/recommendations`
-      );
+    const response = await axios.delete(`${API_BASE_URL}/${brandId}/recommendations`);
+    return response.data;
+  }
 
-      return response.data;
-    } catch (error: any) {
-      console.error("Error deleting recommendations:", error.response?.data || error.message);
-      throw new Error(
-        error.response?.data?.detail || error.message || "Failed to delete recommendations"
-      );
-    }
+  // ============================================
+  // CAMPAIGN CRUD
+  // ============================================
+
+  static async createCampaign(brandId: string, payload: any) {
+    const response = await axios.post(`${API_BASE_URL}/${brandId}/campaigns`, payload);
+    return response.data;
+  }
+
+  static async getCampaigns(brandId: string, options?: { status?: string; limit?: number; offset?: number }) {
+    const params = new URLSearchParams();
+    if (options?.status) params.append('status', options.status);
+    if (options?.limit) params.append('limit', options.limit.toString());
+    if (options?.offset) params.append('offset', options.offset.toString());
+
+    const url = `${API_BASE_URL}/${brandId}/campaigns${params.toString() ? '?' + params.toString() : ''}`;
+    const response = await axios.get(url);
+    return response.data;
+  }
+
+  static async getCampaign(brandId: string, campaignId: string) {
+    const response = await axios.get(`${API_BASE_URL}/${brandId}/campaigns/${campaignId}`);
+    return response.data;
+  }
+
+  static async updateCampaignStatus(brandId: string, campaignId: string, status: string) {
+    const response = await axios.put(
+      `${API_BASE_URL}/${brandId}/campaigns/${campaignId}/status`,
+      { status }
+    );
+    return response.data;
+  }
+
+  static async deleteCampaign(brandId: string, campaignId: string) {
+    const response = await axios.delete(`${API_BASE_URL}/${brandId}/campaigns/${campaignId}`);
+    return response.data;
+  }
+
+  // ============================================
+  // BRAND RESOURCES
+  // ============================================
+
+  static async createResource(brandId: string, payload: any) {
+    const response = await axios.post(`${API_BASE_URL}/${brandId}/resources`, payload);
+    return response.data;
+  }
+
+  static async getResources(brandId: string, resourceType?: string) {
+    const params = resourceType ? `?resource_type=${resourceType}` : '';
+    const response = await axios.get(`${API_BASE_URL}/${brandId}/resources${params}`);
+    return response.data;
+  }
+
+  static async getResource(brandId: string, resourceId: string) {
+    const response = await axios.get(`${API_BASE_URL}/${brandId}/resources/${resourceId}`);
+    return response.data;
+  }
+
+  static async getResourceByVariable(brandId: string, variableName: string) {
+    const response = await axios.get(`${API_BASE_URL}/${brandId}/resources/by-variable/${variableName}`);
+    return response.data;
+  }
+
+  static async getFilledVariables(brandId: string) {
+    const response = await axios.get(`${API_BASE_URL}/${brandId}/resources/filled-variables`);
+    return response.data;
+  }
+
+  static async updateResource(brandId: string, resourceId: string, payload: any) {
+    const response = await axios.put(`${API_BASE_URL}/${brandId}/resources/${resourceId}`, payload);
+    return response.data;
+  }
+
+  static async deleteResource(brandId: string, resourceId: string) {
+    const response = await axios.delete(`${API_BASE_URL}/${brandId}/resources/${resourceId}`);
+    return response.data;
   }
 }

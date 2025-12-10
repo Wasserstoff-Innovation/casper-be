@@ -5,6 +5,7 @@ import brandKit from "./brandKit";
 import visit from "./visited";
 import campaign from "./campaign";
 import calendar from "./calendar";
+import posts from "./posts";
 import imageGeneration from "./imageGeneration";
 import textGeneration from "./textGeneration";
 
@@ -34,6 +35,10 @@ const defaultRoutes = [
   {
     path: "/v1/calendars",
     route: calendar
+  },
+  {
+    path: "/v1/posts",
+    route: posts
   },
   {
     path: "/image-generation",

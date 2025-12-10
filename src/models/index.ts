@@ -96,6 +96,14 @@ export {
 } from './ImageGeneration';
 
 // ============================================================================
-// Campaign
+// Campaign (Legacy)
 // ============================================================================
 export { CampaignPlan, ContentCalendar, ICampaignPlan, IContentCalendar } from './Campaign';
+
+// ============================================================================
+// New Campaign System (Python backend collections)
+// ============================================================================
+export { CalendarPost, ICalendarPost, IContentConcept, ICreativeDirection, IPrerequisites, IProductionRequirements, IStrategicContext } from './CalendarPost';
+export { CampaignNew, ICampaignNew, CampaignStatus, ICampaignGoal } from './CampaignNew';
+export { BrandRecommendation, IBrandRecommendation, IRecommendation, IRecommendationGoal, IPlatformStrategy, IConversationMessage } from './BrandRecommendation';
+export { BrandResource, IBrandResource, ResourceType } from './BrandResource';
